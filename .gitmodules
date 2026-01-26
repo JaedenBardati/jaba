@@ -1,0 +1,3 @@
+[submodule "scripts/giz"]
+	path = scripts/giz
+	url = git@github.com:JaedenBardati/giz.git
