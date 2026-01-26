@@ -5,10 +5,10 @@ This is a repository where I keep a lot the code that I use day to day. Mostly t
 ## Requirements
 
 - Python 3
-- Various modules require different python packages, but generally you commonly need `numpy`, `matplotlib`, `scipy`, `astropy`, and `h5py`. See `jae/requirements.txt` for a full list of everything you could possibly need.
+- Various modules require different python packages, but generally you commonly need `numpy`, `matplotlib`, `scipy`, `astropy`, and `h5py`. See `setup.py` for a full list of everything you could possibly need.
 
 ## Install
 
-1) Clone using `git clone git@github.com:JaedenBardati/jae.git`
-2) Run `setup.sh` to set up this code on a new machine.
-3) Now you can `import jae` as you need.
+1) Clone the repo with `git clone git@github.com:JaedenBardati/jae.git`
+2) Set up python package with `pip install -e jae`
+3) Now, `import jae` as needed.
