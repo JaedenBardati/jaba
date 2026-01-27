@@ -7,7 +7,7 @@ _FILETYPE_MODULES = {'hdf5':hdf5, 'fits':fits,}    # STRICTLY LOWERCASE KEYS, or
 """
 Requirements for a new filetype:
  1) ** EXTS_SUPPORTED list containing a list of all supported extensions - check that this does not conflict with other extensions
- 2) ** test_open(file_path) function that returns 0 if the file failed to open and 1 if the file successfully opened (i.e. fits the form of the file type)
+ 2) ** _test_open(file_path) function that returns 0 if the file failed to open and 1 if the file successfully opened (i.e. fits the form of the file type)
  3) ** explore(file_path) function that displays as summary of the file structure for the user
  4) * get_metadata(file_path, **kwargs) function that returns the metadata in no particular format but returns None if no metadata.
  5) * get_data(file_path, **kwargs) function that returns all the data in no particular format (note this only really works for small files)
@@ -15,7 +15,7 @@ Requirements for a new filetype:
 """
 
 def guess_filetype(file_path, _force_filetype=None):
-    '''This function tries to decide what your data is by looking at it. It should be fairly general, so long as you define a test_open function and EXTS_SUPPORTED list for each filetype.'''
+    '''This function tries to decide what your data is by looking at it. It should be fairly general, so long as you define a _test_open function and EXTS_SUPPORTED list for each filetype.'''
     if _force_filetype is None:
         if not os.path.exists(file_path):
             raise FileNotFoundError('File at path "{}" not found.'.format(file_path))
@@ -28,7 +28,7 @@ def guess_filetype(file_path, _force_filetype=None):
         
         # assume type if it sucessfully loads
         for filetype in _FILETYPE_MODULES.values():
-            if ext in filetype.test_open():
+            if ext in filetype._test_open():
                 return filetype.__name__
         
         raise NotImplementedError('Loading this filetype is not supported. Please add support.') 

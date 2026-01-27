@@ -3,7 +3,7 @@ from astropy.io import fits
 
 EXTS_SUPPORTED = ('.fits', '.fit', '.fts')
 
-def test_open(file_path):
+def _test_open(file_path):
     try:
         with fits.open(file_path) as hdul:
             pass
@@ -21,8 +21,16 @@ def explore(file_path):
 
 def get_dataset(file_path, index=0):
     with fits.open(file_path) as hdul:
-        image_data = np.array(hdul[index].data)
-    return image_data
+        data = np.array(hdul[index].data)
+    return data
+
+def get_data(file_path):
+    all_data = []
+    with fits.open(file_path) as hdul:
+        for index in range(len(hdul)):
+            all_data.append(np.array(hdul[index].data))
+    return all_data
+
 
 # examples/tests
 #explore('skirtrun_temp_1_1_T_xy.fits')

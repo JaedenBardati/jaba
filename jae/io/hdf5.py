@@ -6,10 +6,10 @@ import numpy as np
 
 EXTS_SUPPORTED = ('.hdf5', '.h5', '.hdf')
 
-class OutputH5List(list):
+class _OutputH5List(list):
     pass
 
-def _handle_file_path_input_h5(func):
+def _handle_file_path_input(func):
     # This decorator handles handles any multi-file file path
     # cases (pass name without extension for multi-file support).
     def _wrapper(file_path, *args, **kwargs):
@@ -40,31 +40,48 @@ def _handle_file_path_input_h5(func):
             outs = []
             for idx, (fp, _) in sorted(zip(indices, file_path_ext_pair_multifile_list)):
                 outs.append(func(fp, *args, _idx=idx, **kwargs))
-            return OutputH5List(outs)
+            return _OutputH5List(outs)
         else:
             raise ValueError("Ambiguous file path: multiple hdf5 files found with file name '{}' without all having the standard multi-file structure.".format(file_path))
     return _wrapper
 
-def _only_open_first_h5_file(func):
-    @_handle_file_path_input_h5
+def _only_open_first_file(func):
+    @_handle_file_path_input
     def _wrapper(*args, _idx=None, **kwargs):
         if _idx is None or _idx == 0:
             return func(*args, **kwargs)
         return None
     return _wrapper
 
-def _combine_output_multi_h5_file_arrays(func):
+def _combine_output_multi_file_arrays(func):
     def _wrapper(*args, **kwargs):
-        outs = _handle_file_path_input_h5(func)(*args, **kwargs)
-        if isinstance(outs, OutputH5List):
+        outs = _handle_file_path_input(func)(*args, **kwargs)
+        if isinstance(outs, _OutputH5List):
             return np.concatenate(outs, axis=0)
         else:
             return outs
     return _wrapper
 
+def _combine_output_multi_file_dict_of_arrays(func):
+    def _wrapper(*args, **kwargs):
+        outs = _handle_file_path_input(func)(*args, **kwargs)
+        if isinstance(outs, _OutputH5List):
+            combined_dict = {}
+            for out in outs:
+                for key, value in out:
+                    if key in combined_dict:
+                        combined_dict[key].append(value)
+                        continue
+                    combined_dict[key] = [value,]
+            for key, value_list in combined_dict:
+                combined_dict[key] = np.concatenate(value_list, axis=0)
+        else:
+            return outs
+    return _wrapper
 
-@_only_open_first_h5_file
-def test_open(file_path):
+
+@_only_open_first_file
+def _test_open(file_path):
     try:
         with h5py.File(file_path, 'r') as f:
             pass
@@ -72,8 +89,8 @@ def test_open(file_path):
         return 0
     return 1
 
-@_only_open_first_h5_file
-def explore_h5(file_path):
+@_only_open_first_file
+def explore(file_path):
     with h5py.File(file_path, 'r') as f:
         def print_structure(name, obj):
             if isinstance(obj, h5py.Dataset):
@@ -86,15 +103,27 @@ def explore_h5(file_path):
         print("f keys: ", f.keys())
         pass
 
-@_combine_output_multi_h5_file_arrays
-def get_dataset_h5(file_path, dataset_path, _idx=None):
+@_combine_output_multi_file_arrays
+def get_dataset(file_path, dataset_path, keepViewObject=False, _idx=None):
+    '''Returns the desired dataset in a numpy array (or HDF5View object if enabled).'''
     with h5py.File(file_path, 'r') as f:
-        data = np.array(f[dataset_path])
+        data = np.array(f[dataset_path]) if not keepViewObject else f[dataset_path]
     return data
+
+@_combine_output_multi_file_dict_of_arrays
+def get_data(file_path, _idx=None):
+    '''Returns all data into a dictionary. Not recommended if your file is large.'''
+    all_data = {}
+    def collect_datasets(name, obj):
+        if isinstance(obj, h5py.Dataset):
+            all_data[name] = obj[()]
+    with h5py.File(file_path, 'r') as f:
+        f.visititems(collect_datasets)
+    return all_data
 
 
 # examples/tests
-#explore_h5('blackhole_mergers.hdf5')
-#explore_h5('snap_042')
-#get_dataset_h5('blackhole_mergers.hdf5', 'details/mass')
-#get_dataset_h5('snap_042', 'PartType5/Coordinates')
+#explore('blackhole_mergers.hdf5')
+#explore('snap_042')
+#get_dataset('blackhole_mergers.hdf5', 'details/mass')
+#get_dataset('snap_042', 'PartType5/Coordinates')
