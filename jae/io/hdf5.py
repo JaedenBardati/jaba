@@ -91,6 +91,7 @@ def _test_open(file_path):
 
 @_only_open_first_file
 def explore(file_path):
+    '''Prints the file structure and basic attributes of the data.'''
     with h5py.File(file_path, 'r') as f:
         def print_structure(name, obj):
             if isinstance(obj, h5py.Dataset):
@@ -103,16 +104,27 @@ def explore(file_path):
         print("f keys: ", f.keys())
         pass
 
+@_only_open_first_file
+def get_metadata(file_path):
+    '''Returns all metadata as a dictionary (path) of dictionaries (metadata attribute name). Only looks at the first file if there are many.'''
+    all_data = {}
+    def collect_datasets(name, obj):
+        if isinstance(obj, h5py.Group):
+            all_data[name] = dict(f[name].attrs)
+    with h5py.File(file_path, 'r') as f:
+        f.visititems(collect_datasets)
+    return all_data
+
 @_combine_output_multi_file_arrays
 def get_dataset(file_path, dataset_path, keepViewObject=False, _idx=None):
-    '''Returns the desired dataset in a numpy array (or HDF5View object if enabled).'''
+    '''Returns the desired dataset as a numpy array (or HDF5View object if enabled).'''
     with h5py.File(file_path, 'r') as f:
         data = np.array(f[dataset_path]) if not keepViewObject else f[dataset_path]
     return data
 
 @_combine_output_multi_file_dict_of_arrays
 def get_data(file_path, _idx=None):
-    '''Returns all data into a dictionary. Not recommended if your file is large.'''
+    '''Returns all data as a dictionary. Not recommended if your data is large or in multiple files.'''
     all_data = {}
     def collect_datasets(name, obj):
         if isinstance(obj, h5py.Dataset):
