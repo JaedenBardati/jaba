@@ -1,6 +1,6 @@
 from setuptools import setup, find_packages
 
-with open("README", 'r') as f:
+with open("README.md", 'r') as f:
     long_description = f.read()
 
 setup(
@@ -10,7 +10,7 @@ setup(
     description='A package with a bunch of code I regularly use. Primarily focused on analysis of MHD simulation data.',
     long_description=long_description,
     packages=find_packages(),
-    python_requires='>=3.6',
+    python_requires='>=3.7',
     install_requires=[
                       'numpy',
                       'matplotlib',

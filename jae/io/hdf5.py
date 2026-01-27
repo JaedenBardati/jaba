@@ -4,13 +4,14 @@ import glob
 import h5py
 import numpy as np
 
+EXTS_SUPPORTED = ('.hdf5', '.h5', '.hdf')
+
 class OutputH5List(list):
     pass
 
 def _handle_file_path_input_h5(func):
     # This decorator handles handles any multi-file file path
     # cases (pass name without extension for multi-file support).
-    EXTS_SUPPORTED = ('.hdf5', '.h5')
     def _wrapper(file_path, *args, **kwargs):
         file_path_name, file_path_ext = os.path.splitext(file_path)
         if file_path_ext:
@@ -61,6 +62,15 @@ def _combine_output_multi_h5_file_arrays(func):
             return outs
     return _wrapper
 
+
+@_only_open_first_h5_file
+def test_open(file_path):
+    try:
+        with h5py.File(file_path, 'r') as f:
+            pass
+    except:
+        return 0
+    return 1
 
 @_only_open_first_h5_file
 def explore_h5(file_path):
