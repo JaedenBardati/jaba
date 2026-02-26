@@ -1,6 +1,6 @@
 ## Summary
 
-This is a repository where I keep a lot the code that I use day to day. Mostly this is python (see the python `jaba` submodule), but I also include some scripts that I commonly use to run a few different codes/routines.
+This is a repository where I keep a lot my often used code, mostly for GIZMO or SKIRT simulations and analysis. Mostly this is python (see the python `jaba` submodule), but I also include some useful bash scripts. The goal is for it to be portable, expandable, and easy to use.
 
 ## Requirements
 
@@ -10,5 +10,7 @@ This is a repository where I keep a lot the code that I use day to day. Mostly t
 ## Install
 
 1) Clone the repo with `git clone git@github.com:JaedenBardati/jaba.git`
-2) Set up python package with `pip install -e jaba`
+2) Set up the package by running `jaba/setup.sh`
 3) Now, `import jaba` as needed.
+
+Note that when using a new system, you may need to adjust the setup bash file for jaba and some of the submodules - particularly, `giz` if you plan on using it to manage running GIZMO simulations.
