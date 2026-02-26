@@ -1,6 +1,6 @@
 ## Summary
 
-This is a repository where I keep a lot the code that I use day to day. Mostly this is python (see the python `jae` submodule), but I also include some scripts that I commonly use to run a few different codes/routines.
+This is a repository where I keep a lot the code that I use day to day. Mostly this is python (see the python `jaba` submodule), but I also include some scripts that I commonly use to run a few different codes/routines.
 
 ## Requirements
 
@@ -9,6 +9,6 @@ This is a repository where I keep a lot the code that I use day to day. Mostly t
 
 ## Install
 
-1) Clone the repo with `git clone git@github.com:JaedenBardati/jae.git`
-2) Set up python package with `pip install -e jae`
-3) Now, `import jae` as needed.
+1) Clone the repo with `git clone git@github.com:JaedenBardati/jaba.git`
+2) Set up python package with `pip install -e jaba`
+3) Now, `import jaba` as needed.
