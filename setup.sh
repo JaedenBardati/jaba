@@ -347,13 +347,16 @@ if [[ "$setup_submodules" == "y" ]]; then
     git config --global push.recurseSubmodules on-demand
     git config --global submodule.recurse true
 
+    cd scripts
+
     ### > setup GIZ
     read -p "Set up GIZ? [y/n] " setup_giz
     if [[ "$setup_giz" == "y" ]]; then
         printf "Setting up GIZ submodule...\n"
-        cd scripts/giz
-        setup.sh
-        cd ../..
+        cd giz
+        git checkout main
+        setup.sh || exit 1
+        cd ..
     else
         printf "Skipping GIZ setup.\n"
     fi
