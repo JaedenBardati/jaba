@@ -7,7 +7,6 @@
 # Setup jaba
 source "$HOME/.bashrc"
 if [ -z "${JABA_LOCATION+x}" ]; then
-then
     echo "It seems that Jaba is not setup yet. Please run the jaba setup.sh script and try again."
     exit
 fi

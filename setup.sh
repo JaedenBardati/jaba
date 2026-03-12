@@ -10,13 +10,15 @@ QCSSH_FILE="$REPO_LOCATION/scripts/qcs/qcs.sh"
 
 PYTHON_EXE="python3"
 BREW_EXE="brew"
-CONDA_EXE="conda"
+CONDA_CMD="conda"  # do NOT name this CONDA_EXE; conda init overwrites that variable
 ENVIRONMENT_NAME="venv"
 ENVIRONMENT_TYPE="pip" 
 
 JABA_VARIABLES_STRING="# >>> Added by Jaba >>>"
 JABA_VARIABLES_ENDSTRING="# <<< Added by Jaba <<<"
 
+
+source "${BASHRC_FILE}"
 
 ### linux or mac?
 SYSTEM_TYPE="$(uname -s)"
@@ -78,6 +80,7 @@ fi
 ### if mac, add .zshrc and .bash_profile to source .bashrc if it doesn't already (or zshrc if using zsh)
 if [[ "$SYSTEM_TYPE" == "Darwin" ]]; then
     ZSHRC_FILE="$HOME/.zshrc"
+    source "$ZSHRC_FILE"
     if [[ ! -e "$ZSHRC_FILE" ]]; then
         printf "Creating %s (it did not exist).\n" "$ZSHRC_FILE"
         echo "source $BASHRC_FILE" > "$ZSHRC_FILE" || { printf "Failed to create %s\n" "$ZSHRC_FILE"; exit 1; }
@@ -89,6 +92,7 @@ if [[ "$SYSTEM_TYPE" == "Darwin" ]]; then
     fi
 
     BASH_PROFILE_FILE="$HOME/.bash_profile"
+    source "$BASH_PROFILE_FILE"
     if [[ ! -e "$BASH_PROFILE_FILE" ]]; then
         printf "Creating %s (it did not exist).\n" "$BASH_PROFILE_FILE"
         echo "source $BASHRC_FILE" > "$BASH_PROFILE_FILE" || { printf "Failed to create %s\n" "$BASH_PROFILE_FILE"; exit 1; }
@@ -211,12 +215,11 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             fi
         fi
         # >> install conda if needed
-        if [[ "$ENVIRONMENT_TYPE" == "conda" ]] && ! command -v "${CONDA_EXE}" &> /dev/null; then
+        if [[ "$ENVIRONMENT_TYPE" == "conda" ]] && ! command -v "${CONDA_CMD}" &> /dev/null; then
             read -p "Conda is not installed. Attempt to install conda via homebrew? [y/n] " install_conda
             if [[ "$install_conda" == "y" ]]; then
                 printf "Installing conda via homebrew...\n"
                 $BREW_EXE install --cask miniconda
-                $CONDA_EXE init "$(basename "${SHELL}")"
             fi
         fi  
     elif [[ $PYTHON_INSTALL_METHOD == "apt-get" ]]; then
@@ -230,12 +233,11 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             fi
         fi
         # >> install conda if needed
-        if [[ "$ENVIRONMENT_TYPE" == "conda" ]] && ! command -v "${CONDA_EXE}" &> /dev/null; then
+        if [[ "$ENVIRONMENT_TYPE" == "conda" ]] && ! command -v "${CONDA_CMD}" &> /dev/null; then
             read -p "Conda is not installed. Attempt to install conda via homebrew? [y/n] " install_conda
             if [[ "$install_conda" == "y" ]]; then
                 printf "Installing conda via homebrew...\n"
                 $BREW_EXE install --cask miniconda
-                $CONDA_EXE init "$(basename "${SHELL}")"
             fi
         fi 
     elif [[ $PYTHON_INSTALL_METHOD == "module" ]]; then
@@ -258,14 +260,17 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
     ### > make/load python environment
     if [[ "$ENVIRONMENT_TYPE" == "conda" ]]; then
         # >> check if there is already a conda environment with the same name, and use it if so, otherwise create a new one
-        if $CONDA_EXE env list | grep -qE "^\s*${ENVIRONMENT_NAME}\s"; then
+        if $CONDA_CMD env list | grep -qE "^\s*${ENVIRONMENT_NAME}\s"; then
             printf "Conda environment '%s' already exists. Activating it...\n" "$ENVIRONMENT_NAME"
         else
             printf "Creating conda environment named '%s' ...\n" "$ENVIRONMENT_NAME"
-            $CONDA_EXE create -n "$ENVIRONMENT_NAME" -y
+            $CONDA_CMD create -n "$ENVIRONMENT_NAME" python -y
         fi
-        $CONDA_EXE activate "$ENVIRONMENT_NAME"
-        SETUP_PYTHON_ENVIRONMENT_COMMANDS="${SETUP_PYTHON_ENVIRONMENT_COMMANDS} eval \\\"$(command conda 'shell.bash' 'hook' 2> /dev/null)\\\"; $CONDA_EXE activate ${ENVIRONMENT_NAME};"
+        # source conda's shell hook so that `conda activate` works (it's a shell function, not a binary command)
+        source "$($CONDA_CMD info --base)/etc/profile.d/conda.sh"
+        while [[ "${CONDA_SHLVL:-0}" -gt 0 ]]; do conda deactivate; done # deactivate any existing conda envs first so activate puts the env at the front of PATH
+        conda activate "$ENVIRONMENT_NAME" || { printf "Failed to activate conda environment '%s'.\n" "$ENVIRONMENT_NAME"; exit 1; }
+        SETUP_PYTHON_ENVIRONMENT_COMMANDS="${SETUP_PYTHON_ENVIRONMENT_COMMANDS} source \\\"\$($CONDA_CMD info --base)/etc/profile.d/conda.sh\\\"; conda activate ${ENVIRONMENT_NAME};"
     elif [[ "$ENVIRONMENT_TYPE" == "pip" ]]; then
         # >> check if there is already a pip environment, and use it if so, otherwise create a new one
         if [[ -d ".${ENVIRONMENT_NAME}" ]]; then
@@ -288,7 +293,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
 
     ### > deactivate environment
     if [[ "$ENVIRONMENT_TYPE" == "conda" ]]; then
-        $CONDA_EXE deactivate
+        conda deactivate
     elif [[ "$ENVIRONMENT_TYPE" == "pip" ]]; then
         deactivate
     fi

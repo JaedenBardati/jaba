@@ -12,9 +12,9 @@ setup(
     packages=find_packages(),
     python_requires='>=3.7',
     install_requires=[
-                      'numpy==1.21.6',
+                      'numpy', ##==1.21.6
                       'matplotlib', #==3.5.3
-                      'scipy==1.7.3', 
+                      'scipy', ##==1.7.3 
                       'astropy', #==4.3.1
                       'h5py', #==3.1.0
                       'pandas', #==1.1.5
