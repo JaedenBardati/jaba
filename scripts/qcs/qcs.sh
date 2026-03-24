@@ -6,6 +6,7 @@
 
 # Setup jaba
 source "$HOME/.bashrc"
+shopt -s expand_aliases
 if [ -z "${JABA_LOCATION+x}" ]; then
     echo "It seems that Jaba is not setup yet. Please run the jaba setup.sh script and try again."
     exit

@@ -1172,7 +1172,7 @@ def plot1Dmean(x, qty, weights=None, labels=None, linestyles='-', nbins=100, xlo
 #####################                                              QUICK CHECK SIMULATION                                                          #####################
 ########################################################################################################################################################################
 
-def quick_check(filepath, output_dir=None, debugging=False):
+def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=True):
     """ THIS IS THE MAIN FUNCTION TO CHANGE..."""
     if output_dir is None:
         output_dir='.'
@@ -1185,9 +1185,16 @@ def quick_check(filepath, output_dir=None, debugging=False):
     # pre-load required data
     snap.pos0, snap.dens0, snap.mass0,
 
+    # center around particle
+    if center_around_BH:
+       bh_parttype=3
+       bh_index=0
+       cpos = snap['PartType%d'%bh_parttype, 'Coordinates'][bh_index][np.newaxis, :]
+       cvel = snap['PartType%d'%bh_parttype, 'Velocities'][bh_index][np.newaxis, :]
+
     # check data
     log_timing(f"running check plots ...")
-    r = np.sqrt(np.sum(snap.pos0**2, axis=1))  # spherical radius
+    r = np.sqrt(np.sum((snap.pos0 - cpos)**2, axis=1))  # spherical radius
     plot1Dmean(r.to('pc'), snap.dens0.to('g/cm**3'), weights=(None, snap.mass0, snap.mass0/snap.dens0), 
                labels=('mass-weighted', 'volume-weighted', 'particle mean'), 
                linestyles=('-', '-', '--'),
