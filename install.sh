@@ -6,7 +6,7 @@ REPO_LOCATION="$(cd "$(dirname "$0")" && pwd)" # start in the repo directory (as
 BASHRC_FILE="$HOME/.bashrc"  # only use bashrc for simplicity, even if on mac, but then redirect bash_profile to source bashrc
 BASHRC_TEMP_FILE="${BASHRC_FILE}.tmp"
 PYENVSH_FILE="$REPO_LOCATION/scripts/pyenv.sh"
-QCSSH_FILE="$REPO_LOCATION/scripts/qcs/qcs.sh"
+QCSSH_FILE="$REPO_LOCATION/scripts/qcs.sh"
 
 PYTHON_EXE="python3"
 BREW_EXE="brew"
@@ -251,7 +251,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             printf "Failed to load main package modules '%s'. Please check that these are correct for your system and modify setup.sh if needed.\n" "${MAIN_PACKAGE_MODULES}"
             exit 1
         fi
-        SETUP_PYTHON_ENVIRONMENT_COMMANDS="${SETUP_PYTHON_ENVIRONMENT_COMMANDS} module purge; module load ${MAIN_PACKAGE_MODULES};"
+        SETUP_PYTHON_ENVIRONMENT_COMMANDS="${SETUP_PYTHON_ENVIRONMENT_COMMANDS}${SETUP_PYTHON_ENVIRONMENT_COMMANDS:+ }module purge; module load ${MAIN_PACKAGE_MODULES};"
     else
         printf "Unknown python installation method '%s'. Please modify setup.sh to specify how you want to install or load python.\n" "$PYTHON_INSTALL_METHOD"
         exit 1
@@ -270,7 +270,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         source "$($CONDA_CMD info --base)/etc/profile.d/conda.sh"
         while [[ "${CONDA_SHLVL:-0}" -gt 0 ]]; do conda deactivate; done # deactivate any existing conda envs first so activate puts the env at the front of PATH
         conda activate "$ENVIRONMENT_NAME" || { printf "Failed to activate conda environment '%s'.\n" "$ENVIRONMENT_NAME"; exit 1; }
-        SETUP_PYTHON_ENVIRONMENT_COMMANDS="${SETUP_PYTHON_ENVIRONMENT_COMMANDS} source \\\"\$($CONDA_CMD info --base)/etc/profile.d/conda.sh\\\"; conda activate ${ENVIRONMENT_NAME};"
+        SETUP_PYTHON_ENVIRONMENT_COMMANDS="${SETUP_PYTHON_ENVIRONMENT_COMMANDS}${SETUP_PYTHON_ENVIRONMENT_COMMANDS:+ }"'source \"'"$($CONDA_CMD info --base)/etc/profile.d/conda.sh"'\";'" conda activate ${ENVIRONMENT_NAME};"
     elif [[ "$ENVIRONMENT_TYPE" == "pip" ]]; then
         # >> check if there is already a pip environment, and use it if so, otherwise create a new one
         if [[ -d ".${ENVIRONMENT_NAME}" ]]; then
@@ -280,7 +280,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             $PYTHON_EXE -m venv ".${ENVIRONMENT_NAME}"
         fi
         source ".${ENVIRONMENT_NAME}/bin/activate"
-        SETUP_PYTHON_ENVIRONMENT_COMMANDS="${SETUP_PYTHON_ENVIRONMENT_COMMANDS} source \\\"$REPO_LOCATION/.${ENVIRONMENT_NAME}/bin/activate\\\";"
+        SETUP_PYTHON_ENVIRONMENT_COMMANDS="${SETUP_PYTHON_ENVIRONMENT_COMMANDS}${SETUP_PYTHON_ENVIRONMENT_COMMANDS:+ }"'source \"'"$REPO_LOCATION/.${ENVIRONMENT_NAME}/bin/activate"'\";'
     else
         printf "Unknown environment type '%s'. Please modify setup.sh to specify a valid environment type.\n" "$ENVIRONMENT_TYPE"
         exit 1
@@ -312,7 +312,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         printf "export JABA_LOCATION=\"%s\"\n" "$REPO_LOCATION"
 
         printf "\n#python environment\n"
-        printf "alias setup_jaba_python_environment=\"${SETUP_PYTHON_ENVIRONMENT_COMMANDS}\"\n"
+        printf "alias setup_jaba_python_environment=\"%s\"\n" "${SETUP_PYTHON_ENVIRONMENT_COMMANDS}"
         printf "alias pyenv='$PYENVSH_FILE'\n"
         printf "alias py='pyenv'\n"
         if [[ ! "$SCHEDULER_EXE" == "" ]]; then

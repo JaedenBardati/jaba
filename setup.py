@@ -1,4 +1,4 @@
-from setuptools import setup, find_packages
+from setuptools import setup
 
 with open("README.md", 'r') as f:
     long_description = f.read()
@@ -9,7 +9,8 @@ setup(
     author='Jaeden Bardati',
     description='A package with a bunch of code I regularly use. Primarily focused on analysis of MHD simulation data.',
     long_description=long_description,
-    packages=find_packages(),
+    package_dir={'jaba': 'jabapy'},
+    packages=['jaba'],
     python_requires='>=3.7',
     install_requires=[
                       'numpy', ##==1.21.6
@@ -22,6 +23,6 @@ setup(
                       'yt', #==4.1.4
                       'pynbody', #==1.3.0
                       'photutils', # ==1.3.0
-                      'opencv-python', #==4.8.1.78
+                      'opencv-python',
                      ]
 )

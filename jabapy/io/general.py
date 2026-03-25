@@ -1,7 +1,7 @@
 import os
 
-import .hdf5 as hdf5
-import .fits as fits
+from . import hdf5
+from . import fits
 _FILETYPE_MODULES = {'hdf5':hdf5, 'fits':fits,}    # STRICTLY LOWERCASE KEYS, order by decreasing strictness of file type rules
 
 """

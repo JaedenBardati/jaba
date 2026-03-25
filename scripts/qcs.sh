@@ -20,7 +20,7 @@ setup_jaba_python_environment
 ##   If no file is specified, it will run in interactive mode (load all relevant modules for analysis).
 ##   If "." is specified as the file, it will run on all files in the current directory.
 ANALYSIS_DIR="./analysis"
-QCS_FILEPATH="${JABA_LOCATION}/scripts/qcs/quickchecksim.py"
+QCS_FILEPATH="${JABA_LOCATION}/tools/quickchecksim.py"
 
 
 if [ "$1" == "" ]; then

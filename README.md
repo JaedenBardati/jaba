@@ -1,13 +1,16 @@
 ## Summary
 
-Some commonly used code, mostly for [GIZMO](http://www.tapir.caltech.edu/~phopkins/Site/GIZMO.html) or [SKIRT](https://skirt.ugent.be/root/_home.html) simulations and analysis. This is primarily composed of my python 3 `jaba` package, but I also include some useful scripts. The goal is for it to be *portable, expandable, and easy to use*.
+Some commonly used code, mostly for [GIZMO](http://www.tapir.caltech.edu/~phopkins/Site/GIZMO.html) or [SKIRT](https://skirt.ugent.be/root/_home.html) simulations and analysis. This is primarily composed of my python 3 `jabapy` package, but I also include some useful scripts. The goal is for it to be *portable, expandable, and easy to use*.
 
-All you need is bash (default in unix systems like mac or linux). The `setup.sh` file will install everything else you may need, including python, conda, simulation codes, etc. I have only tested it on the computers and clusters that I have access to, so use with caution.
+All you need is bash (so some unix-based system like mac or linux). The `install.sh` file will set up everything else you may need, including python, conda, simulation codes, etc. I have only tested it on the computers and clusters that I have access to, so use with caution.
 
 ## Install
 
-1) Run `git clone git@github.com:JaedenBardati/jaba.git` in a terminal to clone the repo.
-2) Run `bash jaba/setup.sh`. If you don't have a unix system, you will have to `pip install jaba` into your own python environment.
+1) Run `git clone git@github.com:JaedenBardati/jaba.git` in a terminal to clone the repo. 
+2) Run `bash jaba/install.sh`. If you don't have a unix system, you will have to `pip install jabapy` into your own python environment.
+3) Run `source ~/.bashrc` if you ran the last step to get access to the jaba commands and variables.
+
+That's it. If you run into a problem on your system, just update the `install.sh` accordingly, but try to maintain functionality on existing systems if you want to push your changes to the main branch.
 
 ### Optional Submodules
 
@@ -16,7 +19,7 @@ There are a number of optional submodules, including:
 - GIZ: A script to handle running/managing [GIZMO](http://www.tapir.caltech.edu/~phopkins/Site/GIZMO.html) simulations. Call it with `giz` in the terminal.
 - (TO DO) SKI: A script to handle running/managing [SKIRT](https://skirt.ugent.be/root/_home.html) simulations. Call it with `ski` in the terminal.
 
-If you choose, these will be installed when you run `setup.sh`.
+If you choose, these will be installed when you run `install.sh`.
 
 ## Common Usage
 
@@ -27,7 +30,7 @@ If you choose, these will be installed when you run `setup.sh`.
 - `pyq file.py`: queue your python script to run as a job on a cluster.
 - `qcs snapshot.hdf5`: dump diagnostic plots for quick simulation analysis ("quick check simulation")
 
-See the `jaba` python package code for more details. Use `import jaba` in your python files to access the `jaba` python package.
+See the `jabapy` python package code for more details. Use `import jaba` in your python files to access `jabapy`.
 
 ### Running Simulations
 
