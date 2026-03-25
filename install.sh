@@ -8,10 +8,10 @@ BASHRC_TEMP_FILE="${BASHRC_FILE}.tmp"
 PYENVSH_FILE="$REPO_LOCATION/scripts/pyenv.sh"
 QCSSH_FILE="$REPO_LOCATION/scripts/qcs.sh"
 
-PYTHON_EXE="python3"
-BREW_EXE="brew"
+PYTHON_CMD="python3"
+BREW_CMD="brew"
 CONDA_CMD="conda"  # do NOT name this CONDA_EXE; conda init overwrites that variable
-ENVIRONMENT_NAME="venv"
+ENVIRONMENT_NAME="jaba_env"
 ENVIRONMENT_TYPE="pip" 
 
 JABA_VARIABLES_STRING="# >>> Added by Jaba >>>"
@@ -61,13 +61,15 @@ if [[ "$HOSTNAME" == *"frontera"* && "$SYSTEM_TYPE" == "Linux" && "$SCHEDULER_EX
 elif [[ "$HOSTNAME" == "Jaedens-MacBook-Pro.local" && "$SYSTEM_TYPE" == "Darwin" && "$SCHEDULER_EXE" == "" ]]; then
     printf "I think you are on Jaeden's MacBook Pro. Resetting parameters accordingly.\n"
     ENVIRONMENT_TYPE="conda"
+#...
 else
     printf "I don't recognize your host '$HOSTNAME'. " 
     if [[ $SCHEDULER_EXE == "" ]]; then
         printf "Since you don't appear to be on a cluster, I'll try setting up everything up using the defaults for your machine type.\n"
     else
-        printf "Yet you appear to be on a cluster... I'll try using some defaults, but I would highly suggest modifying jaba's setup.sh to add the relevant modules.\n"
-        MAIN_PACKAGE_MODULES="intel impi python3"
+        printf "Yet you appear to be on a cluster...\n" 
+        printf "[warning] I'll try using some defaults, but I would highly suggest modifying jaba's setup.sh to add the relevant modules.\n"
+        MAIN_PACKAGE_MODULES="intel impi ${PYTHON_CMD}"
     fi
 fi
 
@@ -174,12 +176,13 @@ else
 fi
 
 if [[ $DO_MAIN_SETUP == "Y" ]]; then
-    SETUP_PYTHON_ENVIRONMENT_COMMANDS=""
+    ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS=""
+    DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS=""
 
     ## > install/load in python
     if [[ $PYTHON_INSTALL_METHOD == "homebrew" ]]; then
         # >> install homebrew if needed
-        if ! command -v "${BREW_EXE}" &> /dev/null; then
+        if ! command -v "${BREW_CMD}" &> /dev/null; then
             read -p "Homebrew is not installed. Attempt to install homebrew? [y/n] " install_brew
             if [[ "$install_brew" == "y" ]]; then
                 printf "Installing homebrew...\n"
@@ -189,7 +192,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
                 }
 
                 # >>> make brew available in the current shell if installer didn't.
-                if ! command -v "${BREW_EXE}" &> /dev/null; then
+                if ! command -v "${BREW_CMD}" &> /dev/null; then
                     if [[ -x /opt/homebrew/bin/brew ]]; then
                         eval "$(/opt/homebrew/bin/brew shellenv)"
                     elif [[ -x /usr/local/bin/brew ]]; then
@@ -197,8 +200,8 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
                     fi
                 fi
                 
-                if ! command -v "${BREW_EXE}" &> /dev/null; then
-                    printf "Homebrew installed, but '%s' is still not on PATH. Restart your shell or add brew to PATH, then re-run setup.\n" "${BREW_EXE}"
+                if ! command -v "${BREW_CMD}" &> /dev/null; then
+                    printf "Homebrew installed, but '%s' is still not on PATH. Restart your shell or add brew to PATH, then re-run setup.\n" "${BREW_CMD}"
                     exit 1
                 fi
             else
@@ -207,11 +210,11 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             fi
         fi
         # >> install python if needed
-        if ! command -v "${PYTHON_EXE}" &> /dev/null; then
-            read -p "Python3 is not installed. Attempt to install python3 via homebrew? [y/n] " install_python
+        if ! command -v "${PYTHON_CMD}" &> /dev/null; then
+            read -p "Python3 is not installed. Attempt to install ${PYTHON_CMD} via homebrew? [y/n] " install_python
             if [[ "$install_python" == "y" ]]; then
-                printf "Installing python3 via homebrew...\n"
-                $BREW_EXE install python3
+                printf "Installing ${PYTHON_CMD} via homebrew...\n"
+                $BREW_CMD install ${PYTHON_CMD}
             fi
         fi
         # >> install conda if needed
@@ -219,17 +222,17 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             read -p "Conda is not installed. Attempt to install conda via homebrew? [y/n] " install_conda
             if [[ "$install_conda" == "y" ]]; then
                 printf "Installing conda via homebrew...\n"
-                $BREW_EXE install --cask miniconda
+                $BREW_CMD install --cask miniconda
             fi
         fi  
     elif [[ $PYTHON_INSTALL_METHOD == "apt-get" ]]; then
         # >> install python if needed
-        if ! command -v "${PYTHON_EXE}" &> /dev/null; then
-            read -p "Python3 is not installed. Attempt to install python3 via apt-get? [y/n] " install_python
+        if ! command -v "${PYTHON_CMD}" &> /dev/null; then
+            read -p "Python3 is not installed. Attempt to install ${PYTHON_CMD} via apt-get? [y/n] " install_python
             if [[ "$install_python" == "y" ]]; then
-                printf "Installing python via apt-get...\n"
+                printf "Installing ${PYTHON_CMD} via apt-get...\n"
                 sudo apt-get update
-                sudo apt-get install python3 python3-pip
+                sudo apt-get install ${PYTHON_CMD} ${PYTHON_CMD}-pip
             fi
         fi
         # >> install conda if needed
@@ -237,7 +240,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             read -p "Conda is not installed. Attempt to install conda via homebrew? [y/n] " install_conda
             if [[ "$install_conda" == "y" ]]; then
                 printf "Installing conda via homebrew...\n"
-                $BREW_EXE install --cask miniconda
+                $BREW_CMD install --cask miniconda
             fi
         fi 
     elif [[ $PYTHON_INSTALL_METHOD == "module" ]]; then
@@ -251,7 +254,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             printf "Failed to load main package modules '%s'. Please check that these are correct for your system and modify setup.sh if needed.\n" "${MAIN_PACKAGE_MODULES}"
             exit 1
         fi
-        SETUP_PYTHON_ENVIRONMENT_COMMANDS="${SETUP_PYTHON_ENVIRONMENT_COMMANDS}${SETUP_PYTHON_ENVIRONMENT_COMMANDS:+ }module purge; module load ${MAIN_PACKAGE_MODULES};"
+        ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }module purge; module load ${MAIN_PACKAGE_MODULES};"
     else
         printf "Unknown python installation method '%s'. Please modify setup.sh to specify how you want to install or load python.\n" "$PYTHON_INSTALL_METHOD"
         exit 1
@@ -270,17 +273,17 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         source "$($CONDA_CMD info --base)/etc/profile.d/conda.sh"
         while [[ "${CONDA_SHLVL:-0}" -gt 0 ]]; do conda deactivate; done # deactivate any existing conda envs first so activate puts the env at the front of PATH
         conda activate "$ENVIRONMENT_NAME" || { printf "Failed to activate conda environment '%s'.\n" "$ENVIRONMENT_NAME"; exit 1; }
-        SETUP_PYTHON_ENVIRONMENT_COMMANDS="${SETUP_PYTHON_ENVIRONMENT_COMMANDS}${SETUP_PYTHON_ENVIRONMENT_COMMANDS:+ }"'source \"'"$($CONDA_CMD info --base)/etc/profile.d/conda.sh"'\";'" conda activate ${ENVIRONMENT_NAME};"
+        ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }"'source \"'"$($CONDA_CMD info --base)/etc/profile.d/conda.sh"'\";'" conda activate ${ENVIRONMENT_NAME};"
     elif [[ "$ENVIRONMENT_TYPE" == "pip" ]]; then
         # >> check if there is already a pip environment, and use it if so, otherwise create a new one
         if [[ -d ".${ENVIRONMENT_NAME}" ]]; then
             printf "Pip environment '%s' already exists. Activating it...\n" ".${ENVIRONMENT_NAME}"
         else
             printf "Creating pip environment at '%s' ...\n" ".${ENVIRONMENT_NAME}"
-            $PYTHON_EXE -m venv ".${ENVIRONMENT_NAME}"
+            $PYTHON_CMD -m venv ".${ENVIRONMENT_NAME}"
         fi
         source ".${ENVIRONMENT_NAME}/bin/activate"
-        SETUP_PYTHON_ENVIRONMENT_COMMANDS="${SETUP_PYTHON_ENVIRONMENT_COMMANDS}${SETUP_PYTHON_ENVIRONMENT_COMMANDS:+ }"'source \"'"$REPO_LOCATION/.${ENVIRONMENT_NAME}/bin/activate"'\";'
+        ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }"'source \"'"$REPO_LOCATION/.${ENVIRONMENT_NAME}/bin/activate"'\";'
     else
         printf "Unknown environment type '%s'. Please modify setup.sh to specify a valid environment type.\n" "$ENVIRONMENT_TYPE"
         exit 1
@@ -288,14 +291,16 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
 
     ### > install python module
     printf "Installing jaba as a module to python ${ENVIRONMENT_TYPE} environment ${ENVIRONMENT_NAME} ...\n"
-    $PYTHON_EXE -m pip install --upgrade pip
-    $PYTHON_EXE -m pip install -e . # note that you should install this to an environment you like
+    $PYTHON_CMD -m pip install --upgrade pip
+    $PYTHON_CMD -m pip install -e . # note that you should install this to an environment you like
 
     ### > deactivate environment
     if [[ "$ENVIRONMENT_TYPE" == "conda" ]]; then
         conda deactivate
+        DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }conda deactivate;"
     elif [[ "$ENVIRONMENT_TYPE" == "pip" ]]; then
         deactivate
+        DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }deactivate;"
     fi
 
     ### > setup jaba settings in bashrc 
@@ -312,11 +317,12 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         printf "export JABA_LOCATION=\"%s\"\n" "$REPO_LOCATION"
 
         printf "\n#python environment\n"
-        printf "alias setup_jaba_python_environment=\"%s\"\n" "${SETUP_PYTHON_ENVIRONMENT_COMMANDS}"
+        printf "alias activate_jaba_python_environment=\"%s\"\n" "${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}"
+        printf "alias deactivate_jaba_python_environment=\"%s\"\n" "${DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}"
         printf "alias pyenv='$PYENVSH_FILE'\n"
         printf "alias py='pyenv'\n"
         if [[ ! "$SCHEDULER_EXE" == "" ]]; then
-            printf "alias pyq='sbatch $PYENVSH_FILE'\n"
+            printf "alias pyq='$SCHEDULER_EXE $PYENVSH_FILE'\n"
         fi
         printf "alias qcs='${QCSSH_FILE}'\n"
 
@@ -324,7 +330,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         if [[ "$add_alias" == "y" ]]; then
             printf "\n#non-jaba general aliases\n"
             printf "alias tailf='tail -f'\n"
-            if [[ ! "$SCHEDULER_EXE" == "" ]]; then
+            if [[ "$SCHEDULER_EXE" == "sbatch" ]]; then
                 printf "alias sq='squeue -u jbardati'\n"
             fi
         fi

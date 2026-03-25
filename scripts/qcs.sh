@@ -11,7 +11,8 @@ if [ -z "${JABA_LOCATION+x}" ]; then
     echo "It seems that Jaba is not setup yet. Please run the jaba setup.sh script and try again."
     exit
 fi
-setup_jaba_python_environment
+activate_jaba_python_environment
+############
 
 # Main code
 ## Runs a quick check on the inputed GIZMO snapshot (HDF5).
@@ -51,3 +52,6 @@ else
         python3 ${QCS_FILEPATH} ${1} ${ANALYSIS_DIR} ${@:2}
     fi
 fi
+
+############
+deactivate_jaba_python_environment

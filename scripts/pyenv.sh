@@ -11,7 +11,8 @@ if [ -z "${JABA_LOCATION+x}" ]; then
     echo "It seems that Jaba is not setup yet. Please run the jaba setup.sh script and try again."
     exit
 fi
-setup_jaba_python_environment
+activate_jaba_python_environment
+############
 
 # Main code
 ## Launches python 3 in custom environment. Code produced by the jaba setup script.
@@ -23,3 +24,6 @@ else
 fi
 
 python3 ${1} 
+
+############
+deactivate_jaba_python_environment
