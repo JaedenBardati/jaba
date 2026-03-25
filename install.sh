@@ -308,7 +308,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
     rsync -ac "$BASHRC_FILE" "$BASHRC_TEMP_FILE" > /dev/null || { printf "Failed to create temporary copy of bashrc file.\n"; exit 1; }
     remove_block_between_markers "$BASHRC_TEMP_FILE" "$JABA_VARIABLES_STRING" "$JABA_VARIABLES_ENDSTRING" || exit 1
     {
-        printf "\n${JABA_VARIABLES_STRING}\n"
+        printf "${JABA_VARIABLES_STRING}\n"
         printf "export JABA_LOCATION=\"%s\"\n" "$REPO_LOCATION"
 
         printf "\n#python environment\n"
@@ -329,17 +329,24 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             fi
         fi
 
-        printf "${JABA_VARIABLES_ENDSTRING}\n\n"
+        printf "${JABA_VARIABLES_ENDSTRING}\n"
     } >> "${BASHRC_TEMP_FILE}"
 
-    printf "\nProposed changes to %s:\n" "$BASHRC_FILE"
-    diff -u "$BASHRC_FILE" "$BASHRC_TEMP_FILE"
-    read -p "Should I make the above changes to your .bashrc? [y/n] " confirm_bashrc
-    if [[ "$confirm_bashrc" == "y" ]]; then
-        mv -v "$BASHRC_TEMP_FILE" "$BASHRC_FILE" > /dev/null 
+    
+    FILE_DIFFERENCE=$(diff -u "$BASHRC_FILE" "$BASHRC_TEMP_FILE")
+    if [[ ! -z "$FILE_DIFFERENCE" ]]; then
+        printf "\nProposed changes to %s:\n" "$BASHRC_FILE"
+        printf "%s\n" "${FILE_DIFFERENCE}"
+        read -p "Should I make the above changes to your .bashrc? [y/n] " confirm_bashrc
+        if [[ "$confirm_bashrc" == "y" ]]; then
+            mv -v "$BASHRC_TEMP_FILE" "$BASHRC_FILE" > /dev/null 
+        else
+            printf "Aborting bashrc changes and ending program. Temp file is at %s if you want to make the changes manually.\n" "$BASHRC_TEMP_FILE"
+            exit 1
+        fi
     else
-        printf "Aborting bashrc changes and ending program. Temp file is at %s if you want to make the changes manually.\n" "$BASHRC_TEMP_FILE"
-        exit 1
+        printf "No changes were made to the .bashrc file. Removing temporary file...\n"
+        rm "$BASHRC_TEMP_FILE"
     fi
 fi
 
