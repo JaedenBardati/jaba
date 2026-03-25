@@ -3,7 +3,7 @@ REPO_LOCATION="$(cd "$(dirname "$0")" && pwd)" # start in the repo directory (as
 
 ##############################
 # defaults
-BASHRC_FILE="$HOME/.bashrc"  # only use bashrc for simplicity, even if on mac, but then redirect bash_profile to source bashrc
+BASHRC_FILE="$HOME/.bashrc"  # only use bashrc for simplicity, even if on mac, but then redirect bash_profile/zshrc to source bashrc
 BASHRC_TEMP_FILE="${BASHRC_FILE}.tmp"
 PYENVSH_FILE="$REPO_LOCATION/scripts/pyenv.sh"
 QCSSH_FILE="$REPO_LOCATION/scripts/qcs.sh"
@@ -11,11 +11,13 @@ QCSSH_FILE="$REPO_LOCATION/scripts/qcs.sh"
 PYTHON_CMD="python3"
 BREW_CMD="brew"
 CONDA_CMD="conda"  # do NOT name this CONDA_EXE; conda init overwrites that variable
-ENVIRONMENT_NAME="jaba_env"
-ENVIRONMENT_TYPE="pip" 
+PYTHON_ENVIRONMENT_NAME="jaba_env"
+PYTHON_ENVIRONMENT_TYPE="pip" 
 
 JABA_VARIABLES_STRING="# >>> Added by Jaba >>>"
 JABA_VARIABLES_ENDSTRING="# <<< Added by Jaba <<<"
+
+INFERRED_SYSTEM="Unknown" # to be set later
 
 
 source "${BASHRC_FILE}"
@@ -26,22 +28,24 @@ if [[ "$SYSTEM_TYPE" == "Darwin" ]]; then
     # MAC
     printf "I think you are using a Mac.\n"
     PYTHON_INSTALL_METHOD="homebrew"
+    INFERRED_SYSTEM="General Mac"
 elif [[ "$SYSTEM_TYPE" == "Linux" ]]; then
     # LINUX
     printf "I think you are using Linux.\n"
     PYTHON_INSTALL_METHOD="apt-get"
+    INFERRED_SYSTEM="General Linux Local"
 else
     printf "I can't tell what system you are using... I get '$SYSTEM_TYPE' from 'uname -s'. Please check and modify jaba's setup.sh accordingly.\n"
     exit 1
 fi
 
 ## slurm or no scheduler?
-SCHEDULER_EXE=""  # leave blank if no scheduler
-SRUN_EXE=""
+SCHEDULER_CMD=""  # leave blank if no scheduler
+SRUN_CMD=""
 if sinfo --version &> /dev/null; then
     printf "Slurm is available.\n"
-    SCHEDULER_EXE="sbatch"
-    SRUN_EXE="srun"
+    SCHEDULER_CMD="sbatch"
+    SRUN_CMD="srun"
     if module --version &> /dev/null; then
         printf "Module system is available.\n"
         PYTHON_INSTALL_METHOD="module"
@@ -51,20 +55,25 @@ if sinfo --version &> /dev/null; then
 else
     printf "Slurm is not available. I will assume that you have don't have a task scheduler.\n"
 fi
+if [[ "$SYSTEM_TYPE" == "Linux" && "$SCHEDULER_CMD" != "" ]]; then
+    INFERRED_SYSTEM="General Linux Server"
+fi
 
 ### infer host, override variables as needed (CHANGE THIS IF YOU HAVE AN UNRECOGNIZED SYSTEM TYPE OR NEED PERSONAL DEFAULTS)
 HOSTNAME="$(hostname)"
-if [[ "$HOSTNAME" == *"frontera"* && "$SYSTEM_TYPE" == "Linux" && "$SCHEDULER_EXE" == "sbatch" ]]; then
+if [[ "$HOSTNAME" == *"frontera"* && "$SYSTEM_TYPE" == "Linux" && "$SCHEDULER_CMD" == "sbatch" ]]; then
     printf "I think you are on Frontera. Resetting parameters accordingly.\n"
-    SRUN_EXE="ibrun"
+    INFERRED_SYSTEM="Frontera"
+    SRUN_CMD="ibrun"
     MAIN_PACKAGE_MODULES="intel/19.1.1 mvapich2-x/2.3 python3/3.7.0 phdf5/1.10.4"
-elif [[ "$HOSTNAME" == "Jaedens-MacBook-Pro.local" && "$SYSTEM_TYPE" == "Darwin" && "$SCHEDULER_EXE" == "" ]]; then
+elif [[ "$HOSTNAME" == "Jaedens-MacBook-Pro.local" && "$SYSTEM_TYPE" == "Darwin" && "$SCHEDULER_CMD" == "" ]]; then
     printf "I think you are on Jaeden's MacBook Pro. Resetting parameters accordingly.\n"
-    ENVIRONMENT_TYPE="conda"
+    INFERRED_SYSTEM="Jaedens MacBook"
+    PYTHON_ENVIRONMENT_TYPE="conda"
 #...
 else
     printf "I don't recognize your host '$HOSTNAME'. " 
-    if [[ $SCHEDULER_EXE == "" ]]; then
+    if [[ $SCHEDULER_CMD == "" ]]; then
         printf "Since you don't appear to be on a cluster, I'll try setting up everything up using the defaults for your machine type.\n"
     else
         printf "Yet you appear to be on a cluster...\n" 
@@ -79,14 +88,17 @@ if [[ ! -e "$BASHRC_FILE" ]]; then
     touch "$BASHRC_FILE" || { printf "Failed to create %s\n" "$BASHRC_FILE"; exit 1; }
 fi
 
-### if mac, add .zshrc and .bash_profile to source .bashrc if it doesn't already (or zshrc if using zsh)
-if [[ "$SYSTEM_TYPE" == "Darwin" ]]; then
+### if local, add .zshrc and .bash_profile to source .bashrc if it doesn't already (or zshrc if using zsh)
+if [[ "$SCHEDULER_CMD" == "" ]]; then
     ZSHRC_FILE="$HOME/.zshrc"
-    source "$ZSHRC_FILE"
     if [[ ! -e "$ZSHRC_FILE" ]]; then
-        printf "Creating %s (it did not exist).\n" "$ZSHRC_FILE"
-        echo "source $BASHRC_FILE" > "$ZSHRC_FILE" || { printf "Failed to create %s\n" "$ZSHRC_FILE"; exit 1; }
+        read -p "Do want to create a .zshrc file that sources .bashrc? (do this if you regularly use zsh) [y/n] " create_zshrc
+        if [[ "$create_zshrc" == "y" ]]; then
+            printf "Creating %s (it did not exist).\n" "$ZSHRC_FILE"
+            echo "source $BASHRC_FILE" > "$ZSHRC_FILE" || { printf "Failed to create %s\n" "$ZSHRC_FILE"; exit 1; }
+        fi
     else
+        source "$ZSHRC_FILE"
         if ! grep -q "source $BASHRC_FILE" "$ZSHRC_FILE"; then
             printf "Adding source bashrc command to %s.\n" "$ZSHRC_FILE"
             echo "source $BASHRC_FILE" >> "$ZSHRC_FILE" || { printf "Failed to update %s\n" "$ZSHRC_FILE"; exit 1; }
@@ -94,14 +106,32 @@ if [[ "$SYSTEM_TYPE" == "Darwin" ]]; then
     fi
 
     BASH_PROFILE_FILE="$HOME/.bash_profile"
-    source "$BASH_PROFILE_FILE"
     if [[ ! -e "$BASH_PROFILE_FILE" ]]; then
-        printf "Creating %s (it did not exist).\n" "$BASH_PROFILE_FILE"
-        echo "source $BASHRC_FILE" > "$BASH_PROFILE_FILE" || { printf "Failed to create %s\n" "$BASH_PROFILE_FILE"; exit 1; }
+        read -p "Do want to create a .bash_profile file that sources .bashrc? (do this if you regularly use bash) [y/n] " create_bash_profile
+        if [[ "$create_bash_profile" == "y" ]]; then
+            printf "Creating %s (it did not exist).\n" "$BASH_PROFILE_FILE"
+            echo "source $BASHRC_FILE" > "$BASH_PROFILE_FILE" || { printf "Failed to create %s\n" "$BASH_PROFILE_FILE"; exit 1; }
+        fi
     else
+        source "$BASH_PROFILE_FILE"
         if ! grep -q "source $BASHRC_FILE" "$BASH_PROFILE_FILE"; then
             printf "Adding source bashrc command to %s.\n" "$BASH_PROFILE_FILE"
             echo "source $BASHRC_FILE" >> "$BASH_PROFILE_FILE" || { printf "Failed to update %s\n" "$BASH_PROFILE_FILE"; exit 1; }
+        fi
+    fi
+
+    SH_PROFILE_FILE="$HOME/.profile"
+    if [[ ! -e "$SH_PROFILE_FILE" ]]; then
+        read -p "Do want to create a .profile file that sources .bashrc? (do this if you regularly use sh) [y/n] " create_sh_profile
+        if [[ "$create_sh_profile" == "y" ]]; then
+            printf "Creating %s (it did not exist).\n" "$SH_PROFILE_FILE"
+            echo "source $BASHRC_FILE" > "$SH_PROFILE_FILE" || { printf "Failed to create %s\n" "$SH_PROFILE_FILE"; exit 1; }
+        fi
+    else
+        source "$SH_PROFILE_FILE"
+        if ! grep -q "source $BASHRC_FILE" "$SH_PROFILE_FILE"; then
+            printf "Adding source bashrc command to %s.\n" "$SH_PROFILE_FILE"
+            echo "source $BASHRC_FILE" >> "$SH_PROFILE_FILE" || { printf "Failed to update %s\n" "$SH_PROFILE_FILE"; exit 1; }
         fi
     fi
 fi
@@ -161,6 +191,7 @@ remove_block_between_markers() {
 }
 
 ### check if jaba block already exists in bashrc, and if so, ask user if they want to reset it, or keep it but skip the main setup
+DO_MAIN_SETUP="N"
 if grep -Fxq "$JABA_VARIABLES_STRING" "$BASHRC_FILE"; then
     printf "Jaba variables already in ${BASHRC_FILE}.\n"
     read -p "Reset jaba? [y/n] " reset_jaba
@@ -168,7 +199,6 @@ if grep -Fxq "$JABA_VARIABLES_STRING" "$BASHRC_FILE"; then
         DO_MAIN_SETUP="Y"
     else
         printf "Skipping main setup.\n"
-        DO_MAIN_SETUP="N"
     fi
 else
     printf "Jaba variables not already in ${BASHRC_FILE}.\n"
@@ -218,7 +248,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             fi
         fi
         # >> install conda if needed
-        if [[ "$ENVIRONMENT_TYPE" == "conda" ]] && ! command -v "${CONDA_CMD}" &> /dev/null; then
+        if [[ "$PYTHON_ENVIRONMENT_TYPE" == "conda" ]] && ! command -v "${CONDA_CMD}" &> /dev/null; then
             read -p "Conda is not installed. Attempt to install conda via homebrew? [y/n] " install_conda
             if [[ "$install_conda" == "y" ]]; then
                 printf "Installing conda via homebrew...\n"
@@ -236,7 +266,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             fi
         fi
         # >> install conda if needed
-        if [[ "$ENVIRONMENT_TYPE" == "conda" ]] && ! command -v "${CONDA_CMD}" &> /dev/null; then
+        if [[ "$PYTHON_ENVIRONMENT_TYPE" == "conda" ]] && ! command -v "${CONDA_CMD}" &> /dev/null; then
             read -p "Conda is not installed. Attempt to install conda via homebrew? [y/n] " install_conda
             if [[ "$install_conda" == "y" ]]; then
                 printf "Installing conda via homebrew...\n"
@@ -245,7 +275,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         fi 
     elif [[ $PYTHON_INSTALL_METHOD == "module" ]]; then
         # >> check that conda is not requested
-        if [[ "$ENVIRONMENT_TYPE" == "conda" ]]; then
+        if [[ "$PYTHON_ENVIRONMENT_TYPE" == "conda" ]]; then
             printf "Conda environment requested, but module-based python loading does not support conda environments. Please modify setup.sh to specify a different environment type.\n"
             exit 1
         fi
@@ -261,44 +291,44 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
     fi
 
     ### > make/load python environment
-    if [[ "$ENVIRONMENT_TYPE" == "conda" ]]; then
+    if [[ "$PYTHON_ENVIRONMENT_TYPE" == "conda" ]]; then
         # >> check if there is already a conda environment with the same name, and use it if so, otherwise create a new one
-        if $CONDA_CMD env list | grep -qE "^\s*${ENVIRONMENT_NAME}\s"; then
-            printf "Conda environment '%s' already exists. Activating it...\n" "$ENVIRONMENT_NAME"
+        if $CONDA_CMD env list | grep -qE "^\s*${PYTHON_ENVIRONMENT_NAME}\s"; then
+            printf "Conda environment '%s' already exists. Activating it...\n" "$PYTHON_ENVIRONMENT_NAME"
         else
-            printf "Creating conda environment named '%s' ...\n" "$ENVIRONMENT_NAME"
-            $CONDA_CMD create -n "$ENVIRONMENT_NAME" python -y
+            printf "Creating conda environment named '%s' ...\n" "$PYTHON_ENVIRONMENT_NAME"
+            $CONDA_CMD create -n "$PYTHON_ENVIRONMENT_NAME" python -y
         fi
         # source conda's shell hook so that `conda activate` works (it's a shell function, not a binary command)
         source "$($CONDA_CMD info --base)/etc/profile.d/conda.sh"
         while [[ "${CONDA_SHLVL:-0}" -gt 0 ]]; do conda deactivate; done # deactivate any existing conda envs first so activate puts the env at the front of PATH
-        conda activate "$ENVIRONMENT_NAME" || { printf "Failed to activate conda environment '%s'.\n" "$ENVIRONMENT_NAME"; exit 1; }
-        ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }"'source \"'"$($CONDA_CMD info --base)/etc/profile.d/conda.sh"'\";'" conda activate ${ENVIRONMENT_NAME};"
-    elif [[ "$ENVIRONMENT_TYPE" == "pip" ]]; then
+        conda activate "$PYTHON_ENVIRONMENT_NAME" || { printf "Failed to activate conda environment '%s'.\n" "$PYTHON_ENVIRONMENT_NAME"; exit 1; }
+        ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }"'source \"'"$($CONDA_CMD info --base)/etc/profile.d/conda.sh"'\";'" conda activate ${PYTHON_ENVIRONMENT_NAME};"
+    elif [[ "$PYTHON_ENVIRONMENT_TYPE" == "pip" ]]; then
         # >> check if there is already a pip environment, and use it if so, otherwise create a new one
-        if [[ -d ".${ENVIRONMENT_NAME}" ]]; then
-            printf "Pip environment '%s' already exists. Activating it...\n" ".${ENVIRONMENT_NAME}"
+        if [[ -d ".${PYTHON_ENVIRONMENT_NAME}" ]]; then
+            printf "Pip environment '%s' already exists. Activating it...\n" ".${PYTHON_ENVIRONMENT_NAME}"
         else
-            printf "Creating pip environment at '%s' ...\n" ".${ENVIRONMENT_NAME}"
-            $PYTHON_CMD -m venv ".${ENVIRONMENT_NAME}"
+            printf "Creating pip environment at '%s' ...\n" ".${PYTHON_ENVIRONMENT_NAME}"
+            $PYTHON_CMD -m venv ".${PYTHON_ENVIRONMENT_NAME}"
         fi
-        source ".${ENVIRONMENT_NAME}/bin/activate"
-        ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }"'source \"'"$REPO_LOCATION/.${ENVIRONMENT_NAME}/bin/activate"'\";'
+        source ".${PYTHON_ENVIRONMENT_NAME}/bin/activate"
+        ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }"'source \"'"$REPO_LOCATION/.${PYTHON_ENVIRONMENT_NAME}/bin/activate"'\";'
     else
-        printf "Unknown environment type '%s'. Please modify setup.sh to specify a valid environment type.\n" "$ENVIRONMENT_TYPE"
+        printf "Unknown environment type '%s'. Please modify setup.sh to specify a valid environment type.\n" "$PYTHON_ENVIRONMENT_TYPE"
         exit 1
     fi
 
     ### > install python module
-    printf "Installing jaba as a module to python ${ENVIRONMENT_TYPE} environment ${ENVIRONMENT_NAME} ...\n"
+    printf "Installing jaba as a module to python ${PYTHON_ENVIRONMENT_TYPE} environment ${PYTHON_ENVIRONMENT_NAME} ...\n"
     $PYTHON_CMD -m pip install --upgrade pip
     $PYTHON_CMD -m pip install -e . # note that you should install this to an environment you like
 
     ### > deactivate environment
-    if [[ "$ENVIRONMENT_TYPE" == "conda" ]]; then
+    if [[ "$PYTHON_ENVIRONMENT_TYPE" == "conda" ]]; then
         conda deactivate
         DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }conda deactivate;"
-    elif [[ "$ENVIRONMENT_TYPE" == "pip" ]]; then
+    elif [[ "$PYTHON_ENVIRONMENT_TYPE" == "pip" ]]; then
         deactivate
         DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }deactivate;"
     fi
@@ -315,22 +345,49 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
     {
         printf "${JABA_VARIABLES_STRING}\n"
         printf "export JABA_LOCATION=\"%s\"\n" "$REPO_LOCATION"
+        printf "export JABA_LAST_UPDATED_UTC=\"%s\"\n" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+        printf "export JABA_MARKER_START=\"%s\"\n" "$JABA_VARIABLES_STRING"
+        printf "export JABA_MARKER_END=\"%s\"\n" "$JABA_VARIABLES_ENDSTRING"
 
+        printf "export JABA_INFERRED_SYSTEM=\"%s\"\n" "$INFERRED_SYSTEM"
+        printf "export JABA_HOSTNAME=\"%s\"\n" "$HOSTNAME"
+        printf "export JABA_SYSTEM_TYPE=\"%s\"\n" "$SYSTEM_TYPE"
+        printf "export JABA_SCHEDULER_CMD=\"%s\"\n" "$SCHEDULER_CMD"
+        printf "export JABA_SRUN_CMD=\"%s\"\n" "$SRUN_CMD"
+
+        printf "export JABA_PYTHON_CMD=\"%s\"\n" "$PYTHON_CMD"
+        printf "export JABA_CONDA_CMD=\"%s\"\n" "$CONDA_CMD"
+        printf "export JABA_PYTHON_ENVIRONMENT_NAME=\"%s\"\n" "$PYTHON_ENVIRONMENT_NAME"
+        printf "export JABA_PYTHON_ENVIRONMENT_TYPE=\"%s\"\n" "$PYTHON_ENVIRONMENT_TYPE"
+        
         printf "\n#python environment\n"
         printf "alias activate_jaba_python_environment=\"%s\"\n" "${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}"
         printf "alias deactivate_jaba_python_environment=\"%s\"\n" "${DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}"
         printf "alias pyenv='$PYENVSH_FILE'\n"
         printf "alias py='pyenv'\n"
-        if [[ ! "$SCHEDULER_EXE" == "" ]]; then
-            printf "alias pyq='$SCHEDULER_EXE $PYENVSH_FILE'\n"
+        if [[ ! "$SCHEDULER_CMD" == "" ]]; then
+            printf "alias pyq='$SCHEDULER_CMD $PYENVSH_FILE'\n"
         fi
         printf "alias qcs='${QCSSH_FILE}'\n"
+        if [[ ! "$SCHEDULER_CMD" == "" ]]; then
+            printf "alias qcsq='$SCHEDULER_CMD $QCSSH_FILE'\n"
+        fi
 
-        read -p "Also add Jaeden's other (non-jaba) general aliases? [y/n] " add_alias
-        if [[ "$add_alias" == "y" ]]; then
+        read -p "Also add Jaeden's jaba development aliases? [y/n] " add_jaba_dev_aliases
+        if [[ "$add_jaba_dev_aliases" == "y" ]]; then
+            printf "\n#jaba development aliases\n"
+            printf "alias edit_py=\"vim ${PYENVSH_FILE};\"\n"
+            printf "alias edit_pyq=edit_py\n"
+            printf "alias edit_qcs=\"vim ${QCSSH_FILE}; vim ${JABA_LOCATION}/tools/quickchecksim.py;\"\n"
+            printf "alias edit_qcsq=edit_qcs\n"
+            printf "alias jaba_todo=\"vim ${JABA_LOCATION}/TODO.txt\"\n"
+        fi
+
+        read -p "Also add Jaeden's other (non-jaba) general aliases? [y/n] " add_general_aliases
+        if [[ "$add_general_aliases" == "y" ]]; then
             printf "\n#non-jaba general aliases\n"
             printf "alias tailf='tail -f'\n"
-            if [[ "$SCHEDULER_EXE" == "sbatch" ]]; then
+            if [[ "$SCHEDULER_CMD" == "sbatch" ]]; then
                 printf "alias sq='squeue -u jbardati'\n"
             fi
         fi
@@ -347,8 +404,13 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         if [[ "$confirm_bashrc" == "y" ]]; then
             mv -v "$BASHRC_TEMP_FILE" "$BASHRC_FILE" > /dev/null 
         else
-            printf "Aborting bashrc changes and ending program. Temp file is at %s if you want to make the changes manually.\n" "$BASHRC_TEMP_FILE"
-            exit 1
+            read -p "Okay, I will abort the bashrc changes and end the program. Should I keep a backup of the proposed changes for you to look at? [y/n] " keep_bashrc_changes
+            if [[ "$keep_bashrc_changes" == "y" ]]; then
+                printf "Keeping proposed changes at %s.\n" "$BASHRC_TEMP_FILE"
+            else
+                rm "$BASHRC_TEMP_FILE" # remove temp file
+            fi
+            exit 0
         fi
     else
         printf "No changes were made to the .bashrc file. Removing temporary file...\n"

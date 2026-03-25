@@ -4,13 +4,14 @@
 #SBATCH -n 1
 #SBATCH -t 1:00:00
 
+############
 # Setup jaba
 source "$HOME/.bashrc"
-shopt -s expand_aliases
 if [ -z "${JABA_LOCATION+x}" ]; then
     echo "It seems that Jaba is not setup yet. Please run the jaba setup.sh script and try again."
     exit
 fi
+shopt -s expand_aliases
 activate_jaba_python_environment
 ############
 
@@ -23,7 +24,7 @@ else
     echo "Launching python with file ${1} ..."
 fi
 
-python3 ${1} 
+${JABA_PYTHON_CMD} ${1} 
 
 ############
 deactivate_jaba_python_environment

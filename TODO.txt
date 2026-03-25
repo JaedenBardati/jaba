@@ -1,6 +1,5 @@
 This is just a text file with some notes of things to do:
 
-- make uninstall.sh (just uninstalls stuff from bashrc) + rename setup.sh to install.sh
 - make setup.sh for giz.sh
 - add ski submodule (ski.sh that mimics giz.sh functionality but for SKIRT, and setup.sh)
 - confirm functionality of py,pyq,qcs,qcsq,giz,ski across systems (frontera + mac)
