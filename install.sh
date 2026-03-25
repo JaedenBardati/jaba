@@ -345,7 +345,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
     {
         printf "${JABA_VARIABLES_STRING}\n"
         printf "export JABA_LOCATION=\"%s\"\n" "$REPO_LOCATION"
-        printf "export JABA_LAST_UPDATED_UTC=\"%s\"\n" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+        #printf "export JABA_DATE_INSTALLED_UTC=\"%s\"\n" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
         printf "export JABA_MARKER_START=\"%s\"\n" "$JABA_VARIABLES_STRING"
         printf "export JABA_MARKER_END=\"%s\"\n" "$JABA_VARIABLES_ENDSTRING"
 
@@ -359,6 +359,10 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         printf "export JABA_CONDA_CMD=\"%s\"\n" "$CONDA_CMD"
         printf "export JABA_PYTHON_ENVIRONMENT_NAME=\"%s\"\n" "$PYTHON_ENVIRONMENT_NAME"
         printf "export JABA_PYTHON_ENVIRONMENT_TYPE=\"%s\"\n" "$PYTHON_ENVIRONMENT_TYPE"
+
+        printf "alias jaba_uninstall=\"(cd ${JABA_LOCATION}; bash ./uninstall.sh;)\"\n"
+        printf "alias jaba_pull=\"(cd ${JABA_LOCATION}; bash ./uninstall.sh; git pull origin; bash ./install.sh; source $HOME/.bashrc;)\"\n"
+        printf "alias jaba_update=jaba_pull\n"
         
         printf "\n#python environment\n"
         printf "alias activate_jaba_python_environment=\"%s\"\n" "${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}"
@@ -380,7 +384,8 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             printf "alias edit_pyq=edit_py\n"
             printf "alias edit_qcs=\"vim ${QCSSH_FILE}; vim ${JABA_LOCATION}/tools/quickchecksim.py;\"\n"
             printf "alias edit_qcsq=edit_qcs\n"
-            printf "alias jaba_todo=\"vim ${JABA_LOCATION}/TODO.txt\"\n"
+            printf "alias jaba_todo=\"vim ${JABA_LOCATION}/TODO.txt;\"\n"
+            printf "alias jaba_soft_pull=\"(cd ${JABA_LOCATION}; git pull origin;)\"\n"
         fi
 
         read -p "Also add Jaeden's other (non-jaba) general aliases? [y/n] " add_general_aliases
