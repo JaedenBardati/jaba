@@ -21,6 +21,10 @@ There are a number of optional submodules, including:
 
 If you choose, these will be installed when you run `install.sh`.
 
+### Updating and Uninstalling
+
+Once installed, just run `bash uninstall.sh` in the jaba directory to uninstall. You can also call `jaba_update` from anywhere to update (uninstall, pull from github and reinstall). If you know what you are doing and installed my dev aliases, you can avoid the full reinstall by calling `jaba_soft_pull`.
+
 ## Common Usage
 
 ### Analysis
@@ -29,8 +33,9 @@ If you choose, these will be installed when you run `install.sh`.
 - `py file.py`: run your python script (replace `file.py` to your script's file name) on the local machine.
 - `pyq file.py`: queue your python script to run as a job on a cluster.
 - `qcs snapshot.hdf5`: dump diagnostic plots for quick simulation analysis ("quick check simulation")
+- `qcsq snapshot.hdf5`: same as above, but queued as a job. 
 
-See the `jabapy` python package code for more details. Use `import jaba` in your python files to access `jabapy`.
+See the `jabapy` python package code for details on that. Use `import jaba` in your python files to access `jabapy`.
 
 ### Running Simulations
 

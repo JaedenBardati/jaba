@@ -360,9 +360,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         printf "export JABA_PYTHON_ENVIRONMENT_NAME=\"%s\"\n" "$PYTHON_ENVIRONMENT_NAME"
         printf "export JABA_PYTHON_ENVIRONMENT_TYPE=\"%s\"\n" "$PYTHON_ENVIRONMENT_TYPE"
 
-        printf "alias jaba_uninstall=\"(cd ${JABA_LOCATION}; bash ./uninstall.sh;)\"\n"
-        printf "alias jaba_pull=\"(cd ${JABA_LOCATION}; bash ./uninstall.sh; git pull origin; bash ./install.sh; source $HOME/.bashrc;)\"\n"
-        printf "alias jaba_update=jaba_pull\n"
+        printf "alias jaba_update=\"(cd ${JABA_LOCATION}; bash ./uninstall.sh; git pull origin; bash ./install.sh; source $HOME/.bashrc;)\"\n"
         
         printf "\n#python environment\n"
         printf "alias activate_jaba_python_environment=\"%s\"\n" "${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}"
