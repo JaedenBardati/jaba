@@ -20,11 +20,11 @@ activate_jaba_python_environment
 ##    The first file argument specifies a python file to run. Leaving this empty launches python interactively.
 if [ "${1}" == "" ]; then
     echo "Launching python interactively ..."
+    ${JABA_PYTHON_CMD} -i
 else
     echo "Launching python with file ${1} ..."
+    ${JABA_PYTHON_CMD} ${1} ${@:2}
 fi
-
-${JABA_PYTHON_CMD} ${1} 
 
 ############
 deactivate_jaba_python_environment
