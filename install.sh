@@ -360,8 +360,10 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         printf "export JABA_PYTHON_ENVIRONMENT_NAME=\"%s\"\n" "$PYTHON_ENVIRONMENT_NAME"
         printf "export JABA_PYTHON_ENVIRONMENT_TYPE=\"%s\"\n" "$PYTHON_ENVIRONMENT_TYPE"
 
-        printf "alias jaba_update=\"(cd ${JABA_LOCATION}; bash ./uninstall.sh; git pull origin; bash ./install.sh; source $HOME/.bashrc;)\"\n"
-        
+        printf "alias jaba-uninstall=\"(cd ${JABA_LOCATION}; bash ./uninstall.sh;)\"\n"
+        printf "alias jaba-reinstall=\"(cd ${JABA_LOCATION}; bash ./install.sh; source $HOME/.bashrc;)\"\n"
+        printf "alias jaba-update=\"(cd ${JABA_LOCATION}; bash ./uninstall.sh; git pull origin; bash ./install.sh; source $HOME/.bashrc;)\"\n"
+
         printf "\n#python environment\n"
         printf "alias activate_jaba_python_environment=\"%s\"\n" "${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}"
         printf "alias deactivate_jaba_python_environment=\"%s\"\n" "${DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}"
@@ -378,12 +380,15 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         read -p "Also add Jaeden's jaba development aliases? [y/n] " add_jaba_dev_aliases
         if [[ "$add_jaba_dev_aliases" == "y" ]]; then
             printf "\n#jaba development aliases\n"
-            printf "alias edit_py=\"vim ${PYENVSH_FILE};\"\n"
-            printf "alias edit_pyq=edit_py\n"
-            printf "alias edit_qcs=\"vim ${QCSSH_FILE}; vim ${JABA_LOCATION}/tools/quickchecksim.py;\"\n"
-            printf "alias edit_qcsq=edit_qcs\n"
-            printf "alias jaba_todo=\"vim ${JABA_LOCATION}/TODO.txt;\"\n"
-            printf "alias jaba_soft_pull=\"(cd ${JABA_LOCATION}; git pull origin;)\"\n"
+            printf "alias jaba-cd=\"cd ${JABA_LOCATION}\"\n"
+            printf "alias jaba-edit-py=\"vim ${PYENVSH_FILE};\"\n"
+            printf "alias jaba-edit-pyq=jaba-edit-py\n"
+            printf "alias jaba-edit-qcs=\"vim ${QCSSH_FILE}; vim ${JABA_LOCATION}/tools/quickchecksim.py;\"\n"
+            printf "alias jaba-edit-qcsq=jaba-edit-qcs\n"
+            printf "alias jaba-edit-todo=\"vim ${JABA_LOCATION}/TODO.txt;\"\n"
+            printf "alias jaba-pull=\"(cd ${JABA_LOCATION}; git pull origin;)\"\n"
+            printf "alias jaba-status=\"(cd ${JABA_LOCATION}; git status; git diff)\"\n"
+            printf "alias jaba-push=\"(cd ${JABA_LOCATION}; git status; git add .; git commit; git push origin;)\"\n"
         fi
 
         read -p "Also add Jaeden's other (non-jaba) general aliases? [y/n] " add_general_aliases
@@ -430,16 +435,15 @@ if [[ "$setup_submodules" == "y" ]]; then
     git config --global push.recurseSubmodules on-demand
     git config --global submodule.recurse true
 
-    cd scripts
-
     ### > setup GIZ
     read -p "Set up GIZ? [y/n] " setup_giz
     if [[ "$setup_giz" == "y" ]]; then
         printf "Setting up GIZ submodule...\n"
-        cd giz
-        git checkout main
-        setup.sh || exit 1
-        cd ..
+        (
+            cd scripts/giz
+            git checkout main
+            bash setup.sh || exit 1
+        )
     else
         printf "Skipping GIZ setup.\n"
     fi

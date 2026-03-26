@@ -856,7 +856,7 @@ class GIZMO_Snapshot(HDF5_Snapshot):
                 factor_key, _units = self._DATASET_UNIT_DICT[dataset_name]
                 factor = self.unit_system[factor_key] if factor_key is not None else 1
                 if factor is None:
-                    if factor_key is 'time':
+                    if factor_key == 'time':
                         assert self.cosmological, 'Time factor should only be None when it is a cosmological simulation.'
                         raw_data = self.scale_factor_to_time(raw_data)
                     else:
