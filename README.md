@@ -29,7 +29,8 @@ Once installed, just run `bash uninstall.sh` in the jaba directory to uninstall.
 
 ### Analysis
 
-- `py`: launch the newly created python environment interactively on the local machine.
+- `py`: launch the newly created python environment (incl. jaba) interactively on the local machine.
+- `jupy`: launch jupyter notebook in the jaba environment on the local machine
 - `py file.py`: run your python script (replace `file.py` to your script's file name) on the local machine.
 - `pyq file.py`: queue your python script to run as a job on a cluster.
 - `qcs snapshot.hdf5`: dump diagnostic plots for quick simulation analysis ("quick check simulation")

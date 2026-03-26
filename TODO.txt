@@ -1,19 +1,28 @@
-This is just a text file with some notes of things to do:
+Stuff to do.
 
-- make setup.sh for giz.sh
-- add ski submodule (ski.sh that mimics giz.sh functionality but for SKIRT, and setup.sh)
-- confirm functionality of py,pyq,qcs,qcsq,giz,ski across systems (frontera + mac)
- 
-jabapy
+jaba:
+ - make py work with interactive queues
+ - make jupy work with interactive queues (only, with both calls alone and when passed files)
+ - add support for c++ installation + compilation and running
+
+jabapy:
  - make sure existing code works
  - add in old code (blr stuff, skirt / morphology analysis stuff, etc.)
+ - make sure that quickchecksim.py runs using jaba package now
+ - add simple examples in basics.ipynb
+
+submodules:
+- make setup.sh for giz.sh
+- add ski submodule (ski.sh that mimics giz.sh functionality but for SKIRT, and setup.sh)
 
 
 KEY STUFF TO MAINTAIN:
-- jaba/jabapy/   : Main jaba python package
-- jaba/install.sh: Sets up the main python package and scripts (RUN FIRST and run again to reinstall)
-- alias py (using jaba/scripts/pyenv.sh)  : launches jaba python package in a python environment setup with setup.sh
-- alias pyq (using jaba/scripts/pyenv.sh) : py but queues to a job scheduler
+- jaba/jabapy/      : Main jaba python package
+- jaba/install.sh   : Sets up the package and scripts (run first and run again to reinstall)
+- jaba/uninstall.sh : Removes the setup made during installation
+- alias py (using jaba/scripts/pyenv.sh)     : launches jaba python package in a python environment setup with setup.sh
+- alias pyq (using jaba/scripts/pyenv.sh)    : py but queues to a job scheduler
+- alias jupy (using jaba/scripts/jupy.sh)    : launches a Jupyter notebook in the jaba python environment 
 - alias qcs/qcsq (using jaba/scripts/qcs.sh) : launches jaba/jabapy/quickchecksim.py with py/pyq
 
 
@@ -21,8 +30,10 @@ KEY STUFF TO MAINTAIN:
         /                  |                    \
      jabapy/            scripts/              install.sh
                            |                  uninstall.sh
-                        pyenv.sh (py, pyq)
+                           |
+                        pyenv.sh (py/pyenv, pyq)
                         qcs.sh (qcs, qcsq)
+                        jupy.sh (jupy)
                         *giz/giz.sh (giz)
                         *ski/ski.sh (ski)
 

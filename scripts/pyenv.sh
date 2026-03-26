@@ -19,6 +19,10 @@ activate_jaba_python_environment
 ## Launches python 3 in custom environment. Code produced by the jaba setup script.
 ##    The first file argument specifies a python file to run. Leaving this empty launches python interactively.
 if [ "${1}" == "" ]; then
+    if [ -n "$SLURM_JOBID" ]; then
+        echo "Error: Running pyenv interactively is not supported in a SLURM job. Please specify a python file to run."
+        exit 1
+    fi
     echo "Launching python interactively ..."
     ${JABA_PYTHON_CMD} -i
 else

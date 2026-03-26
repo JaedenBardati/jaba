@@ -24,5 +24,6 @@ setup(
                       'pynbody', #==1.3.0
                       'photutils', # ==1.3.0
                       'opencv-python',
+                      'notebook',
                      ]
 )

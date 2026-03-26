@@ -11,6 +11,7 @@ QCSSH_FILE="$REPO_LOCATION/scripts/qcs.sh"
 PYTHON_CMD="python3"
 BREW_CMD="brew"
 CONDA_CMD="conda"  # do NOT name this CONDA_EXE; conda init overwrites that variable
+JUPYTER_CMD="jupyter notebook" # or jupyter lab if you prefer (change here)
 PYTHON_ENVIRONMENT_NAME="jaba_env"
 PYTHON_ENVIRONMENT_TYPE="pip" 
 
@@ -357,12 +358,13 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
 
         printf "export JABA_PYTHON_CMD=\"%s\"\n" "$PYTHON_CMD"
         printf "export JABA_CONDA_CMD=\"%s\"\n" "$CONDA_CMD"
+        printf "export JABA_JUPYTER_CMD=\"%s\"\n" "$JUPYTER_CMD"
         printf "export JABA_PYTHON_ENVIRONMENT_NAME=\"%s\"\n" "$PYTHON_ENVIRONMENT_NAME"
         printf "export JABA_PYTHON_ENVIRONMENT_TYPE=\"%s\"\n" "$PYTHON_ENVIRONMENT_TYPE"
 
         printf "alias jaba-uninstall=\"(cd ${JABA_LOCATION}; bash ./uninstall.sh;)\"\n"
-        printf "alias jaba-reinstall=\"(cd ${JABA_LOCATION}; bash ./install.sh; source $HOME/.bashrc;)\"\n"
-        printf "alias jaba-update=\"(cd ${JABA_LOCATION}; bash ./uninstall.sh; git pull origin; bash ./install.sh; source $HOME/.bashrc;)\"\n"
+        printf "alias jaba-reinstall=\"(cd ${JABA_LOCATION}; bash ./install.sh;); source '$HOME/.bashrc';\"\n"
+        printf "alias jaba-update=\"(cd ${JABA_LOCATION}; bash ./uninstall.sh; git pull origin; bash ./install.sh;); source '$HOME/.bashrc';\"\n"
 
         printf "\n#python environment\n"
         printf "alias activate_jaba_python_environment=\"%s\"\n" "${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}"
@@ -372,6 +374,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         if [[ ! "$SCHEDULER_CMD" == "" ]]; then
             printf "alias pyq='$SCHEDULER_CMD $PYENVSH_FILE'\n"
         fi
+        printf "alias jupy='$JABA_LOCATION/scripts/jupy.sh'\n"
         printf "alias qcs='${QCSSH_FILE}'\n"
         if [[ ! "$SCHEDULER_CMD" == "" ]]; then
             printf "alias qcsq='$SCHEDULER_CMD $QCSSH_FILE'\n"
