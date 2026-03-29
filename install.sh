@@ -82,6 +82,7 @@ else
         MAIN_PACKAGE_MODULES="intel impi ${PYTHON_CMD}"
     fi
 fi
+printf "\n"
 
 ### check if bashrc exists and if not, create it
 if [[ ! -e "$BASHRC_FILE" ]]; then
@@ -93,17 +94,23 @@ fi
 if [[ "$SCHEDULER_CMD" == "" ]]; then
     ZSHRC_FILE="$HOME/.zshrc"
     if [[ ! -e "$ZSHRC_FILE" ]]; then
-        read -p "Do want to create a .zshrc file that sources .bashrc? (do this if you regularly use zsh) [y/n] " create_zshrc
-        if [[ "$create_zshrc" == "y" ]]; then
-            printf "Creating %s (it did not exist).\n" "$ZSHRC_FILE"
-            echo "source $BASHRC_FILE" > "$ZSHRC_FILE" || { printf "Failed to create %s\n" "$ZSHRC_FILE"; exit 1; }
-        fi
+	if [[ "${SYSTEM_TYPE}" == "Darwin" ]]; then 
+            read -p "Do want to create a .zshrc file that sources .bashrc? (do this if you regularly use zsh, recommended for mac) [y/n] " create_zshrc
+            if [[ "$create_zshrc" == "y" ]]; then
+                printf "Creating %s (it did not exist).\n" "$ZSHRC_FILE"
+                echo "source $BASHRC_FILE" > "$ZSHRC_FILE" || { printf "Failed to create %s\n" "$ZSHRC_FILE"; exit 1; }
+            fi
+	else
+            printf "skipping .zshrc redirect to .bashrc since you are not on a mac\n"
+	fi
     else
         source "$ZSHRC_FILE"
         if ! grep -q "source $BASHRC_FILE" "$ZSHRC_FILE"; then
             printf "Adding source bashrc command to %s.\n" "$ZSHRC_FILE"
             echo "source $BASHRC_FILE" >> "$ZSHRC_FILE" || { printf "Failed to update %s\n" "$ZSHRC_FILE"; exit 1; }
-        fi
+        else
+	    printf "your .zshrc already redirects to .bashrc\n"
+	fi
     fi
 
     BASH_PROFILE_FILE="$HOME/.bash_profile"
@@ -118,22 +125,30 @@ if [[ "$SCHEDULER_CMD" == "" ]]; then
         if ! grep -q "source $BASHRC_FILE" "$BASH_PROFILE_FILE"; then
             printf "Adding source bashrc command to %s.\n" "$BASH_PROFILE_FILE"
             echo "source $BASHRC_FILE" >> "$BASH_PROFILE_FILE" || { printf "Failed to update %s\n" "$BASH_PROFILE_FILE"; exit 1; }
-        fi
+        else
+	    printf "your .bash_profile already redirects to .bashrc\n"
+	fi
     fi
 
     SH_PROFILE_FILE="$HOME/.profile"
     if [[ ! -e "$SH_PROFILE_FILE" ]]; then
-        read -p "Do want to create a .profile file that sources .bashrc? (do this if you regularly use sh) [y/n] " create_sh_profile
-        if [[ "$create_sh_profile" == "y" ]]; then
-            printf "Creating %s (it did not exist).\n" "$SH_PROFILE_FILE"
-            echo "source $BASHRC_FILE" > "$SH_PROFILE_FILE" || { printf "Failed to create %s\n" "$SH_PROFILE_FILE"; exit 1; }
-        fi
+	if [[ "${SYSTEM_TYPE}" != "Darwin" ]]; then
+            read -p "Do want to create a .profile file that sources .bashrc? (do this if you regularly use sh) [y/n] " create_sh_profile
+            if [[ "$create_sh_profile" == "y" ]]; then
+                printf "Creating %s (it did not exist).\n" "$SH_PROFILE_FILE"
+                echo "source $BASHRC_FILE" > "$SH_PROFILE_FILE" || { printf "Failed to create %s\n" "$SH_PROFILE_FILE"; exit 1; }
+	    fi
+	else
+            printf "skipping .profile redirect to .bashrc since you are on a mac\n"
+	fi
     else
         source "$SH_PROFILE_FILE"
         if ! grep -q "source $BASHRC_FILE" "$SH_PROFILE_FILE"; then
             printf "Adding source bashrc command to %s.\n" "$SH_PROFILE_FILE"
             echo "source $BASHRC_FILE" >> "$SH_PROFILE_FILE" || { printf "Failed to update %s\n" "$SH_PROFILE_FILE"; exit 1; }
-        fi
+        else
+	    printf "your .profile already redirects to .bashrc\n"
+	fi
     fi
 fi
 printf "\n"
@@ -263,11 +278,29 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             if [[ "$install_python" == "y" ]]; then
                 printf "Installing ${PYTHON_CMD} via apt-get...\n"
                 sudo apt-get update
-                sudo apt-get install ${PYTHON_CMD} ${PYTHON_CMD}-pip
+                sudo apt-get install ${PYTHON_CMD}
             fi
         fi
+	# >> install pip if needed
+	if ! "${PYTHON_CMD}" -m pip --help &> /dev/null; then
+	    read -p "Pip is not installed. Attempt to install pip via apt-get? [y/n] " install_pip
+	    if [[ "$install_pip" == "y" ]]; then
+                printf "Installing pip via apt-get...\n"
+		sudo apt-get update
+		sudo apt-get install ${PYTHON_CMD}-pip
+	    fi
+	fi
+	# >> install venv if needed
+        if [[ "$PYTHON_ENVIRONMENT_TYPE" == "pip" ]] && ! "${PYTHON_CMD}" -m venv --help &> /dev/null; then
+            read -p "Venv is not installed. Attempt to install venv via apt-get? [y/n] " install_venv
+	    if [[ "$install_venv" == "y" ]]; then
+                printf "Installing venv via apt-get...\n"
+		sudo apt-get update
+		sudo apt-get install ${PYTHON_CMD}-venv
+	    fi
+        fi
         # >> install conda if needed
-        if [[ "$PYTHON_ENVIRONMENT_TYPE" == "conda" ]] && ! command -v "${CONDA_CMD}" &> /dev/null; then
+	if [[ "$PYTHON_ENVIRONMENT_TYPE" == "conda" ]] && ! command -v "${CONDA_CMD}" &> /dev/null; then
             read -p "Conda is not installed. Attempt to install conda via homebrew? [y/n] " install_conda
             if [[ "$install_conda" == "y" ]]; then
                 printf "Installing conda via homebrew...\n"
@@ -298,23 +331,23 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             printf "Conda environment '%s' already exists. Activating it...\n" "$PYTHON_ENVIRONMENT_NAME"
         else
             printf "Creating conda environment named '%s' ...\n" "$PYTHON_ENVIRONMENT_NAME"
-            $CONDA_CMD create -n "$PYTHON_ENVIRONMENT_NAME" python -y
+	    $CONDA_CMD create -n "$PYTHON_ENVIRONMENT_NAME" python -y | while read -r LINE; do echo "[conda environment creation] $LINE"; done
         fi
         # source conda's shell hook so that `conda activate` works (it's a shell function, not a binary command)
         source "$($CONDA_CMD info --base)/etc/profile.d/conda.sh"
         while [[ "${CONDA_SHLVL:-0}" -gt 0 ]]; do conda deactivate; done # deactivate any existing conda envs first so activate puts the env at the front of PATH
         conda activate "$PYTHON_ENVIRONMENT_NAME" || { printf "Failed to activate conda environment '%s'.\n" "$PYTHON_ENVIRONMENT_NAME"; exit 1; }
-        ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }"'source \"'"$($CONDA_CMD info --base)/etc/profile.d/conda.sh"'\";'" conda activate ${PYTHON_ENVIRONMENT_NAME};"
+        ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }"'source "'"$($CONDA_CMD info --base)/etc/profile.d/conda.sh"'";'" conda activate ${PYTHON_ENVIRONMENT_NAME};"
     elif [[ "$PYTHON_ENVIRONMENT_TYPE" == "pip" ]]; then
         # >> check if there is already a pip environment, and use it if so, otherwise create a new one
-        if [[ -d ".${PYTHON_ENVIRONMENT_NAME}" ]]; then
+	if [[ -f ".${PYTHON_ENVIRONMENT_NAME}/pyvenv.cfg" ]]; then
             printf "Pip environment '%s' already exists. Activating it...\n" ".${PYTHON_ENVIRONMENT_NAME}"
         else
             printf "Creating pip environment at '%s' ...\n" ".${PYTHON_ENVIRONMENT_NAME}"
-            $PYTHON_CMD -m venv ".${PYTHON_ENVIRONMENT_NAME}"
+            $PYTHON_CMD -m venv ".${PYTHON_ENVIRONMENT_NAME}" | while read -r LINE; do echo "[pip environment creation] $LINE"; done
         fi
         source ".${PYTHON_ENVIRONMENT_NAME}/bin/activate"
-        ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }"'source \"'"$REPO_LOCATION/.${PYTHON_ENVIRONMENT_NAME}/bin/activate"'\";'
+        ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }"'source "'"$REPO_LOCATION/.${PYTHON_ENVIRONMENT_NAME}/bin/activate"'";'
     else
         printf "Unknown environment type '%s'. Please modify setup.sh to specify a valid environment type.\n" "$PYTHON_ENVIRONMENT_TYPE"
         exit 1
@@ -322,8 +355,10 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
 
     ### > install python module
     printf "Installing jaba as a module to python ${PYTHON_ENVIRONMENT_TYPE} environment ${PYTHON_ENVIRONMENT_NAME} ...\n"
+    (
     $PYTHON_CMD -m pip install --upgrade pip
     $PYTHON_CMD -m pip install -e . # note that you should install this to an environment you like
+    ) | while read -r LINE; do echo "[jabapy install] $LINE"; done
 
     ### > deactivate environment
     if [[ "$PYTHON_ENVIRONMENT_TYPE" == "conda" ]]; then
@@ -337,8 +372,15 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
     ### > setup jaba settings in bashrc 
     printf "\nSetting up jaba variables and aliases in %s ...\n" "$BASHRC_FILE"
     if [[ -f "$BASHRC_TEMP_FILE" ]]; then
-        printf "Temp file %s already exists. Please check and remove it before running setup.sh again.\n" "$BASHRC_TEMP_FILE"
-        exit 1
+        printf "Temp file %s already exists, likely left over from a previous failed installation. " "$BASHRC_TEMP_FILE"
+	read -p "Would you like to remove it? [y/n]" remove_tmp_bashrc
+	if [[ "$remove_tmp_bashrc" == "y" ]]; then
+	    printf "Okay, removing temporary file.\n"
+            rm "$BASHRC_TEMP_FILE"
+	else
+            printf "Please check and remove ${BASHRC_TEMP_FILE} manually before proceeding with installation/reinstallation.\n"
+            exit 1
+	fi
     fi
     
     rsync -ac "$BASHRC_FILE" "$BASHRC_TEMP_FILE" > /dev/null || { printf "Failed to create temporary copy of bashrc file.\n"; exit 1; }
@@ -367,8 +409,12 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         printf "alias jaba-update=\"(cd ${JABA_LOCATION}; bash ./uninstall.sh; git pull origin; bash ./install.sh;); source '$HOME/.bashrc';\"\n"
 
         printf "\n#python environment\n"
-        printf "alias activate_jaba_python_environment=\"%s\"\n" "${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}"
-        printf "alias deactivate_jaba_python_environment=\"%s\"\n" "${DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}"
+	printf "activate_jaba_python_environment () { %s }\n" "${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}"
+	printf "export -f activate_jaba_python_environment\n"
+        printf "deactivate_jaba_python_environment () { %s }\n" "${DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}"
+	printf "export -f deactivate_jaba_python_environment\n"
+	printf "alias jaba-activate=\"activate_jaba_python_environment;\"\n"
+	printf "alias jaba-deactivate=\"deactivate_jaba_python_environment;\"\n"
         printf "alias pyenv='$PYENVSH_FILE'\n"
         printf "alias py='pyenv'\n"
         if [[ ! "$SCHEDULER_CMD" == "" ]]; then
@@ -384,14 +430,17 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         if [[ "$add_jaba_dev_aliases" == "y" ]]; then
             printf "\n#jaba development aliases\n"
             printf "alias jaba-cd=\"cd ${JABA_LOCATION}\"\n"
+	    printf "alias jaba-edit-install=\"vim ${JABA_LOCATION}/install.sh;\"\n"
             printf "alias jaba-edit-py=\"vim ${PYENVSH_FILE};\"\n"
             printf "alias jaba-edit-pyq=jaba-edit-py\n"
             printf "alias jaba-edit-qcs=\"vim ${QCSSH_FILE}; vim ${JABA_LOCATION}/tools/quickchecksim.py;\"\n"
             printf "alias jaba-edit-qcsq=jaba-edit-qcs\n"
             printf "alias jaba-edit-todo=\"vim ${JABA_LOCATION}/TODO.txt;\"\n"
             printf "alias jaba-pull=\"(cd ${JABA_LOCATION}; git pull origin;)\"\n"
-            printf "alias jaba-status=\"(cd ${JABA_LOCATION}; git status; git diff)\"\n"
-            printf "alias jaba-push=\"(cd ${JABA_LOCATION}; git status; git add .; git commit; git push origin;)\"\n"
+            printf "alias jaba-status=\"(cd ${JABA_LOCATION}; git status;)\"\n"
+	    printf "alias jaba-diff=\"(cd ${JABA_LOCATION}; git diff;)\"\n"
+	    printf "alias jaba-commit=\"(cd ${JABA_LOCATION}; git add .; git commit;)\"\n"
+            printf "alias jaba-push=\"(cd ${JABA_LOCATION}; git push origin;)\"\n"
         fi
 
         read -p "Also add Jaeden's other (non-jaba) general aliases? [y/n] " add_general_aliases
@@ -401,6 +450,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             if [[ "$SCHEDULER_CMD" == "sbatch" ]]; then
                 printf "alias sq='squeue -u jbardati'\n"
             fi
+	    printf "alias ss='source ${BASHRC_FILE}'\n"
         fi
 
         printf "${JABA_VARIABLES_ENDSTRING}\n"
@@ -410,8 +460,9 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
     FILE_DIFFERENCE=$(diff -u "$BASHRC_FILE" "$BASHRC_TEMP_FILE")
     if [[ ! -z "$FILE_DIFFERENCE" ]]; then
         printf "\nProposed changes to %s:\n" "$BASHRC_FILE"
-        printf "%s\n" "${FILE_DIFFERENCE}"
-        read -p "Should I make the above changes to your .bashrc? [y/n] " confirm_bashrc
+        #printf "%s\n" "${FILE_DIFFERENCE}"
+        diff --color -u "$BASHRC_FILE" "$BASHRC_TEMP_FILE"
+	read -p "Should I make the above changes to your .bashrc? [y/n] " confirm_bashrc
         if [[ "$confirm_bashrc" == "y" ]]; then
             mv -v "$BASHRC_TEMP_FILE" "$BASHRC_FILE" > /dev/null 
         else
@@ -429,6 +480,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
     fi
 fi
 
+printf "\n"
 ##############################
 ### setup git submodules
 read -p "Set up submodules? [y/n] " setup_submodules
