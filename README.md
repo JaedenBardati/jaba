@@ -6,7 +6,7 @@ All you need is bash (so some unix-based system like mac or linux). The `install
 
 ## Install
 
-1) Run `git clone git@github.com:JaedenBardati/jaba.git` in a terminal to clone the repo. 
+1) Run `git clone https://github.com/JaedenBardati/jaba.git` or `git clone git@github.com:JaedenBardati/jaba.git` in a terminal to clone the repo. 
 2) Run `bash jaba/install.sh` to setup the package.
 3) Run `source ~/.bashrc` to get access to the jaba commands and variables.
 
