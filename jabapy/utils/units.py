@@ -1,7 +1,7 @@
 from astropy.units import * 
 
 # alias for dimensionless unit
-def_unit('1', u.dimensionless_unscaled)
+def_unit('1', dimensionless_unscaled)
 add_enabled_units(['1'])
 
 ### --- CGS Units --- ###

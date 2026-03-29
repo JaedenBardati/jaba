@@ -20,10 +20,11 @@ setup(
                       'h5py', #==3.1.0
                       'pandas', #==1.1.5
                       'scikit-learn', #==1.0.2
-                      'yt', #==4.1.4
-                      'pynbody', #==1.3.0
+                      'numba',
+                      'notebook',
                       'photutils', # ==1.3.0
                       'opencv-python',
-                      'notebook',
+                      'yt', #==4.1.4
+                      'pynbody', #==1.3.0
                      ]
 )

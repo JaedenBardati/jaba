@@ -56,3 +56,8 @@ def get_data(file_path, filetype=None, **kwargs):
     filetype = guess_filetype(file_path, _force_filetype=filetype)
     return filetype.get_data(file_path, **kwargs)
     
+def get_dataset(file_path, *args, filetype=None, **kwargs):
+    """Returns the dataset(s) associated with your file. If the filetype is not specified, it will try to guess it."""
+    filetype = guess_filetype(file_path, _force_filetype=filetype)
+    return filetype.get_dataset(file_path, *args, **kwargs)
+

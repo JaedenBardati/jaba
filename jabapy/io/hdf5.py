@@ -89,6 +89,26 @@ def _test_open(file_path):
         return 0
     return 1
 
+
+@_only_open_first_file
+def get_group_names(file_path):
+    with h5py.File(file_path, 'r') as f:
+        groups = list(f.keys())
+    return groups
+
+@_only_open_first_file
+def get_attributes(file_path, group):
+    with h5py.File(file_path, 'r') as f:
+        attrs = dict(f[group].attrs)
+    return attrs
+
+@_only_open_first_file
+def get_dataset_names(file_path, group):
+    with h5py.File(file_path, 'r') as f:
+        dataset_names = list(f[group].keys())
+    return dataset_names
+
+
 @_only_open_first_file
 def explore(file_path):
     '''Prints the file structure and basic attributes of the data.'''
