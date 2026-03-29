@@ -344,7 +344,7 @@ class GIZMO_Snapshot(HDF5_Snapshot):
     def _get_dataset(self, particle_type, dataset_name, nosave=False):
         _attr = '_dataset_' + particle_type + '_' + dataset_name
         if nosave or not hasattr(self, _attr):
-            raw_data = super()._get_dataset(particle_type, dataset_name, nosave=True)
+            raw_data = super()._get_dataset(particle_type, dataset_name, nosave=True).astype(np.float64)
             if dataset_name not in self._DATASET_UNIT_DICT.keys():
                 warnings.warn('Dataset "{}" units not recognized. Please adapt GizmoDataset._DATASET_UNIT_DICT to include its units. For now, assuming it is unitless...'.format(dataset_name))
                 return raw_data * u.dimensionless_unscaled
