@@ -453,9 +453,9 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
 
         printf "\n#python environment\n"
 	printf "activate_jaba_python_environment () { %s }\n" "${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}"
-	printf "export -f activate_jaba_python_environment\n"
+	printf "export -f activate_jaba_python_environment "'&> /dev/null'"\n"
         printf "deactivate_jaba_python_environment () { %s }\n" "${DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}"
-	printf "export -f deactivate_jaba_python_environment\n"
+	printf "export -f deactivate_jaba_python_environment "'&> /dev/null'"\n"
 	printf "alias jaba-activate=\"activate_jaba_python_environment;\"\n"
 	printf "alias jaba-deactivate=\"deactivate_jaba_python_environment;\"\n"
         printf "alias pyenv='$PYENVSH_FILE'\n"

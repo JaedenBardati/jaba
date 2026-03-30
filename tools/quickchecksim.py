@@ -311,7 +311,7 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
         plt.savefig(output_dir+'map_Pmag_{}_oom{}.pdf'.format(snap.name, oom))
         plt.clf()
 
-        s.gas['plasma beta'] = np.array(snap.dens0.to('g cm**-3')/(2*1.67262192e-24)*c.k_B.to('erg K**-1')*snap.temp0.to('K')/s.gas['Pmag'], dtype=np.float64)
+        s.gas['plasma beta'] = np.array(snap.dens0.to('g cm**-3')/(2*1.67262192e-24)*c.k_B.to('erg K**-1')*snap.temp0.to('K'), dtype=np.float64)/np.array(s.gas['Pmag'], dtype=np.float64)
         s.gas['plasma beta'].units = 'K' # only to escape unitless issue for plotting purposes
         _map4 = pynbody.plot.sph.image(s.gas, qty='plasma beta', width=r_pc, units='K', noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
         plt.title('gas')
