@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 REPO_LOCATION="$(cd "$(dirname "$0")" && pwd)" # start in the repo directory (assuming setup.sh is in the root)
+cd $REPO_LOCATION
+printf "....JABA INSTALLATION....\n"
 
 ##############################
 # defaults
@@ -22,6 +24,7 @@ INFERRED_SYSTEM="Unknown" # to be set later
 
 
 source "${BASHRC_FILE}"
+JABA_LOCATION=REPO_LOCATION # safeguard for code errors
 
 ### linux or mac?
 SYSTEM_TYPE="$(uname -s)"
@@ -39,6 +42,7 @@ else
     printf "I can't tell what system you are using... I get '$SYSTEM_TYPE' from 'uname -s'. Please check and modify jaba's setup.sh accordingly.\n"
     exit 1
 fi
+SYSTEM_SUBTYPE="$(uname -o)"
 
 ## slurm or no scheduler?
 SCHEDULER_CMD=""  # leave blank if no scheduler
@@ -151,8 +155,7 @@ if [[ "$SCHEDULER_CMD" == "" ]]; then
 	fi
     fi
 fi
-printf "\n"
-
+printf "\n" 
 
 ##############################
 ## main setup script
@@ -272,13 +275,48 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             fi
         fi  
     elif [[ $PYTHON_INSTALL_METHOD == "apt-get" ]]; then
+        # >> install vim if needed
+        if ! command -v "vim" &> /dev/null; then
+            read -p "vim is not installed. Attempt to install vim via apt-get? [y/n] " install_vim
+            if [[ "$install_vim" == "y" ]]; then
+                printf "Installing vim via apt-get...\n"
+                (
+                sudo apt-get -y update
+                sudo apt-get -y install vim
+                ) | while read -r LINE; do echo "[vim install] $LINE"; done
+            fi
+        fi
+        # >> install git if needed
+        if ! command -v "git" &> /dev/null; then
+            read -p "git is not installed. Attempt to install git via apt-get? [y/n] " install_git
+            if [[ "$install_git" == "y" ]]; then
+                printf "Installing git via apt-get...\n"
+                (
+                sudo apt-get -y update
+                sudo apt-get -y install git
+                ) | while read -r LINE; do echo "[git install] $LINE"; done
+            fi
+        fi
+        # >> install rsync if needed
+        if ! command -v "rsync" &> /dev/null; then
+            read -p "rsync is not installed. Attempt to install rsync via apt-get? [y/n] " install_rsync
+            if [[ "$install_rsync" == "y" ]]; then
+                printf "Installing rsync via apt-get...\n"
+                (
+                sudo apt-get -y update
+                sudo apt-get -y install rsync
+                ) | while read -r LINE; do echo "[rsync install] $LINE"; done
+            fi
+        fi
         # >> install python if needed
         if ! command -v "${PYTHON_CMD}" &> /dev/null; then
             read -p "Python3 is not installed. Attempt to install ${PYTHON_CMD} via apt-get? [y/n] " install_python
             if [[ "$install_python" == "y" ]]; then
                 printf "Installing ${PYTHON_CMD} via apt-get...\n"
-                sudo apt-get update
-                sudo apt-get install ${PYTHON_CMD}
+                (
+		sudo apt-get -y update
+                sudo apt-get -y install ${PYTHON_CMD}
+	        ) | while read -r LINE; do echo "[${PYTHON_CMD} install] $LINE"; done
             fi
         fi
 	# >> install pip if needed
@@ -286,17 +324,21 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
 	    read -p "Pip is not installed. Attempt to install pip via apt-get? [y/n] " install_pip
 	    if [[ "$install_pip" == "y" ]]; then
                 printf "Installing pip via apt-get...\n"
-		sudo apt-get update
-		sudo apt-get install ${PYTHON_CMD}-pip
+		(
+		sudo apt-get -y update
+		sudo apt-get -y install ${PYTHON_CMD}-pip
+	        ) | while read -r LINE; do echo "[${PYTHON_CMD}-pip install] $LINE"; done 
 	    fi
 	fi
 	# >> install venv if needed
-        if [[ "$PYTHON_ENVIRONMENT_TYPE" == "pip" ]] && ! "${PYTHON_CMD}" -m venv --help &> /dev/null; then
+        if [[ "$PYTHON_ENVIRONMENT_TYPE" == "pip" ]] && ( ( [[ "$SYSTEM_SUBTYPE" == "GNU/Linux" ]] && ! command -v "${PYTHON_CMD}-venv" &> /dev/null ) || ( ! "${PYTHON_CMD}" -m venv --help &> /dev/null) ) ; then
             read -p "Venv is not installed. Attempt to install venv via apt-get? [y/n] " install_venv
 	    if [[ "$install_venv" == "y" ]]; then
                 printf "Installing venv via apt-get...\n"
-		sudo apt-get update
-		sudo apt-get install ${PYTHON_CMD}-venv
+		(
+		sudo apt-get -y update
+		sudo apt-get -y install ${PYTHON_CMD}-venv
+	        ) | while read -r LINE; do echo "[${PYTHON_CMD}-venv install] $LINE"; done
 	    fi
         fi
         # >> install conda if needed
@@ -304,7 +346,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             read -p "Conda is not installed. Attempt to install conda via homebrew? [y/n] " install_conda
             if [[ "$install_conda" == "y" ]]; then
                 printf "Installing conda via homebrew...\n"
-                $BREW_CMD install --cask miniconda
+                $BREW_CMD install --cask miniconda 
             fi
         fi 
     elif [[ $PYTHON_INSTALL_METHOD == "module" ]]; then
@@ -340,11 +382,11 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }"'source "'"$($CONDA_CMD info --base)/etc/profile.d/conda.sh"'";'" conda activate ${PYTHON_ENVIRONMENT_NAME};"
     elif [[ "$PYTHON_ENVIRONMENT_TYPE" == "pip" ]]; then
         # >> check if there is already a pip environment, and use it if so, otherwise create a new one
-	if [[ -f ".${PYTHON_ENVIRONMENT_NAME}/pyvenv.cfg" ]]; then
+	if [[ -f ".${PYTHON_ENVIRONMENT_NAME}/bin/activate" ]]; then
             printf "Pip environment '%s' already exists. Activating it...\n" ".${PYTHON_ENVIRONMENT_NAME}"
         else
             printf "Creating pip environment at '%s' ...\n" ".${PYTHON_ENVIRONMENT_NAME}"
-            $PYTHON_CMD -m venv ".${PYTHON_ENVIRONMENT_NAME}" | while read -r LINE; do echo "[pip environment creation] $LINE"; done
+            ( yes | $PYTHON_CMD -m venv ".${PYTHON_ENVIRONMENT_NAME}" ) | while read -r LINE; do echo "[pip environment creation] $LINE"; done
         fi
         source ".${PYTHON_ENVIRONMENT_NAME}/bin/activate"
         ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }"'source "'"$REPO_LOCATION/.${PYTHON_ENVIRONMENT_NAME}/bin/activate"'";'
@@ -356,8 +398,8 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
     ### > install python module
     printf "Installing jaba as a module to python ${PYTHON_ENVIRONMENT_TYPE} environment ${PYTHON_ENVIRONMENT_NAME} ...\n"
     (
-    $PYTHON_CMD -m pip install --upgrade pip
-    $PYTHON_CMD -m pip install -e . # note that you should install this to an environment you like
+    yes | $PYTHON_CMD -m pip install --upgrade pip
+    yes | $PYTHON_CMD -m pip install -e . # note that you should install this to an environment you like
     ) | while read -r LINE; do echo "[jabapy install] $LINE"; done
 
     ### > deactivate environment
@@ -395,6 +437,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         printf "export JABA_INFERRED_SYSTEM=\"%s\"\n" "$INFERRED_SYSTEM"
         printf "export JABA_HOSTNAME=\"%s\"\n" "$HOSTNAME"
         printf "export JABA_SYSTEM_TYPE=\"%s\"\n" "$SYSTEM_TYPE"
+        printf "export JABA_SYSTEM_SUBTYPE=\"%s\"\n" "$SYSTEM_SUBTYPE"
         printf "export JABA_SCHEDULER_CMD=\"%s\"\n" "$SCHEDULER_CMD"
         printf "export JABA_SRUN_CMD=\"%s\"\n" "$SRUN_CMD"
 
@@ -404,9 +447,9 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         printf "export JABA_PYTHON_ENVIRONMENT_NAME=\"%s\"\n" "$PYTHON_ENVIRONMENT_NAME"
         printf "export JABA_PYTHON_ENVIRONMENT_TYPE=\"%s\"\n" "$PYTHON_ENVIRONMENT_TYPE"
 
-        printf "alias jaba-uninstall=\"(cd ${JABA_LOCATION}; bash ./uninstall.sh;)\"\n"
-        printf "alias jaba-reinstall=\"(cd ${JABA_LOCATION}; bash ./install.sh;); source '$HOME/.bashrc';\"\n"
-        printf "alias jaba-update=\"(cd ${JABA_LOCATION}; bash ./uninstall.sh; git pull origin; bash ./install.sh;); source '$HOME/.bashrc';\"\n"
+        printf "alias jaba-uninstall=\"(cd ${REPO_LOCATION}; bash ./uninstall.sh;)\"\n"
+        printf "alias jaba-reinstall=\"(cd ${REPO_LOCATION}; bash ./install.sh;); source '$HOME/.bashrc';\"\n"
+        printf "alias jaba-update=\"(cd ${REPO_LOCATION}; bash ./uninstall.sh; git pull origin; bash ./install.sh;); source '$HOME/.bashrc';\"\n"
 
         printf "\n#python environment\n"
 	printf "activate_jaba_python_environment () { %s }\n" "${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}"
@@ -420,7 +463,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         if [[ ! "$SCHEDULER_CMD" == "" ]]; then
             printf "alias pyq='$SCHEDULER_CMD $PYENVSH_FILE'\n"
         fi
-        printf "alias jupy='$JABA_LOCATION/scripts/jupy.sh'\n"
+        printf "alias jupy='${REPO_LOCATION}/scripts/jupy.sh'\n"
         printf "alias qcs='${QCSSH_FILE}'\n"
         if [[ ! "$SCHEDULER_CMD" == "" ]]; then
             printf "alias qcsq='$SCHEDULER_CMD $QCSSH_FILE'\n"
@@ -429,18 +472,18 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         read -p "Also add Jaeden's jaba development aliases? [y/n] " add_jaba_dev_aliases
         if [[ "$add_jaba_dev_aliases" == "y" ]]; then
             printf "\n#jaba development aliases\n"
-            printf "alias jaba-cd=\"cd ${JABA_LOCATION}\"\n"
-	    printf "alias jaba-edit-install=\"vim ${JABA_LOCATION}/install.sh;\"\n"
+            printf "alias jaba-cd=\"cd ${REPO_LOCATION}\"\n"
+	    printf "alias jaba-edit-install=\"vim ${REPO_LOCATION}/install.sh;\"\n"
             printf "alias jaba-edit-py=\"vim ${PYENVSH_FILE};\"\n"
             printf "alias jaba-edit-pyq=jaba-edit-py\n"
-            printf "alias jaba-edit-qcs=\"vim ${QCSSH_FILE}; vim ${JABA_LOCATION}/tools/quickchecksim.py;\"\n"
+            printf "alias jaba-edit-qcs=\"vim ${QCSSH_FILE}; vim ${REPO_LOCATION}/tools/quickchecksim.py;\"\n"
             printf "alias jaba-edit-qcsq=jaba-edit-qcs\n"
-            printf "alias jaba-edit-todo=\"vim ${JABA_LOCATION}/TODO.txt;\"\n"
-            printf "alias jaba-pull=\"(cd ${JABA_LOCATION}; git pull origin;)\"\n"
-            printf "alias jaba-status=\"(cd ${JABA_LOCATION}; git status;)\"\n"
-	    printf "alias jaba-diff=\"(cd ${JABA_LOCATION}; git diff;)\"\n"
-	    printf "alias jaba-commit=\"(cd ${JABA_LOCATION}; git add .; git commit;)\"\n"
-            printf "alias jaba-push=\"(cd ${JABA_LOCATION}; git push origin;)\"\n"
+            printf "alias jaba-edit-todo=\"vim ${REPO_LOCATION}/TODO.txt;\"\n"
+            printf "alias jaba-pull=\"(cd ${REPO_LOCATION}; git pull origin;)\"\n"
+            printf "alias jaba-status=\"(cd ${REPO_LOCATION}; git status;)\"\n"
+	    printf "alias jaba-diff=\"(cd ${REPO_LOCATION}; git diff;)\"\n"
+	    printf "alias jaba-commit=\"(cd ${REPO_LOCATION}; git add .; git commit;)\"\n"
+            printf "alias jaba-push=\"(cd ${REPO_LOCATION}; git push origin;)\"\n"
         fi
 
         read -p "Also add Jaeden's other (non-jaba) general aliases? [y/n] " add_general_aliases
