@@ -27,12 +27,12 @@ import glob, sys, time, warnings
 import os.path
 
 ## jaba
-from jaba.snapshot import load_gizmo
+import jaba
 from jaba.utils.filearguments import get_file_arguments 
 from jaba.utils.timing import log_timing
 from jaba.utils import units as u
 from jaba.utils import constants as c
-import jaba.visual as jv
+from jaba.utils import visual as jv
 
 # other
 import numpy as np
@@ -157,7 +157,7 @@ def plot1Dmean(x, qty, weights=None, labels=None, linestyles='-', nbins=100, xlo
         if i == len(weights) - 1 and out is not None:
             _out = out
             _show_legend = True if any(l is not None for l in labels) else False
-        fig, ax = jv.plot1Dline(_x, _y, fig=fig, ax=ax, label=labels[i], ls=linestyles[i], xlog=xlog, ylog=ylog, xlabel=xlabel, ylabel=ylabel, show_legend=_show_legend, out=_out)
+        fig, ax = jv.plot(_x, _y, fig=fig, ax=ax, label=labels[i], ls=linestyles[i], xlog=xlog, ylog=ylog, xlabel=xlabel, ylabel=ylabel, show_legend=_show_legend, out=_out)
     return fig, ax
 
 ########################################################################################################################################################################
@@ -172,7 +172,7 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
 
     # load snapshot/simulation
     log_timing(f"loading snapshot at {filepath} ...")
-    snap = load_gizmo(filepath, debugging=True) # should likely be debugging=debugging
+    snap = jaba.load(filepath, debugging=True) # should likely be debugging=debugging
     
     # pre-load required data
     snap.pos0, snap.dens0, snap.mass0,
@@ -228,25 +228,25 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
     # resolution plots
     _x1, _y1 = get1Dmean(r.to('pc'), snap.mass0.to('Msun'), nbins=100, xlog=True, cumsum_instead=True) # Mencl
     _x2, _y2 = get1Dmean(r.to('pc'), snap.mass0.to('Msun'), nbins=100, xlog=True) # delta m
-    fig, ax = jv.plot1Dline(_x1, _y1, label=r'$M_\mathrm{encl}$', ls='--', color='black')
-    jv.plot1Dline(_x2, _y2, fig=fig, ax=ax, label=r'$\delta m$', ls='-', color='black', xlog=True, ylog=True, xlabel='spherical radius (pc)', ylabel=r'Mass resolution ($M_\odot$)', show_legend=True, out=output_dir+'mass_resolution_{}.pdf'.format(snap.name))
+    fig, ax = jv.plot(_x1, _y1, label=r'$M_\mathrm{encl}$', ls='--', color='black')
+    jv.plot(_x2, _y2, fig=fig, ax=ax, label=r'$\delta m$', ls='-', color='black', xlog=True, ylog=True, xlabel='spherical radius (pc)', ylabel=r'Mass resolution ($M_\odot$)', show_legend=True, out=output_dir+'mass_resolution_{}.pdf'.format(snap.name))
     _x3, _y3 = get1Dmean(r.to('pc'), np.array((snap.mass0/snap.dens0).to('pc**3'))**(1/3.), nbins=100, xlog=True) # delta r 
-    jv.plot1Dline(_x3, _y3, label=r'$\delta r$', ls='-', color='black', xlog=True, ylog=True, xlabel='spherical radius (pc)', ylabel=r'Spatial resolution $\delta x$ (pc)', out=output_dir+'spatial_resolution_{}.pdf'.format(snap.name))
+    jv.plot(_x3, _y3, label=r'$\delta r$', ls='-', color='black', xlog=True, ylog=True, xlabel='spherical radius (pc)', ylabel=r'Spatial resolution $\delta x$ (pc)', out=output_dir+'spatial_resolution_{}.pdf'.format(snap.name))
 
 
     
 
     # Pmag = np.sum(snap['PartType0','MagneticField'].to('G')**2, axis=1)/(8*np.pi)
     # Pmag_rbins, Pmag_bins = get1Dmean(r.to('pc'), Pmag, xlog=True)
-    # plot1Dline(Pmag_rbins, (Pmag_bins, ), label=('$P_\mathrm{mag}$',), color=('blue',), xlog=True, ylog=True, out='Pmag_{}.pdf'.format(snap.name))
+    # jv.plot(Pmag_rbins, (Pmag_bins, ), label=('$P_\mathrm{mag}$',), color=('blue',), xlog=True, ylog=True, out='Pmag_{}.pdf'.format(snap.name))
     
     # Pth = ((5./3.-1.)*snap.dens0*snap['PartType0','InternalEnergy']/c.c**2).to('g cm**-3')
     # Pth_rbins, Pth_bins = get1Dmean(r.to('pc'), Pth, xlog=True)
-    # plot1Dline(Pth_rbins, (Pth_bins, ), label=('$P_\mathrm{th}$',), color=('red',), xlog=True, ylog=True, out='Pth_{}.pdf'.format(snap.name))
+    # jv.plot(Pth_rbins, (Pth_bins, ), label=('$P_\mathrm{th}$',), color=('red',), xlog=True, ylog=True, out='Pth_{}.pdf'.format(snap.name))
 
     # Prad = ((4./3.-1.) * np.sum(snap['PartType0','PhotonEnergy'],axis=1) / (snap.mass0/snap.dens0)).to('g cm**-3')
     # Prad_rbins, Prad_bins = get1Dmean(r.to('pc'), Prad, xlog=True)
-    # plot1Dline(Prad_rbins, (Prad_bins, ), label=('$P_\mathrm{th}$',), color=('green',), xlog=True, ylog=True, out='Prad_{}.pdf'.format(snap.name))
+    # jv.plot(Prad_rbins, (Prad_bins, ), label=('$P_\mathrm{th}$',), color=('green',), xlog=True, ylog=True, out='Prad_{}.pdf'.format(snap.name))
     
     print('black holes:')
     blackholetype='PartType3' #'PartType5'
@@ -275,52 +275,56 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
     s['vel'].units = 'km s**-1'
     s['temp'].units = 'K'
 
-    r = np.sum(np.array(s['pos'].in_units('pc'), dtype=np.float64)**2, axis=1)
-    max_r_pc = np.nanmax(r)
-    min_r_pc = np.nanmin(r)
-    ooms = max(int(np.log10(max_r_pc/min_r_pc)), 1)
-    for oom in range(ooms):   # todo make this better...
-        r_pc = max_r_pc/10**oom
-        extent = (-r_pc, r_pc, -r_pc, r_pc)
-        _map = pynbody.plot.sph.image(s.gas, width=r_pc, units="m_p cm**-2", noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
-        plt.title('gas')
-        plt.imshow(np.log10(_map), extent=extent, origin='lower')
-        plt.colorbar(label=r'log gas column density $\int \rho dz$ [$m_p cm^{-2}$]')
-        plt.xlabel('x [pc]')
-        plt.ylabel('y [pc]')
-        plt.savefig(output_dir+'map_dens_{}_oom{}.pdf'.format(snap.name, oom))
-        plt.clf()
+    for inclination in [0, 30, 60, 90, 120, 150, 180]:
+        with s.rotate_x(inclination):
+            os.makedirs(output_dir + 'inc{}/'.format(inclination), exist_ok=True)
 
-        _map2 = pynbody.plot.sph.image(s.gas, qty='temp', width=r_pc, units="K", noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
-        plt.title('gas')
-        plt.imshow(np.log10(_map2), extent=extent, origin='lower')
-        plt.colorbar(label=r'log mean gas temperature $T$ [$K$]')
-        plt.xlabel('x [pc]')
-        plt.ylabel('y [pc]')
-        plt.savefig(output_dir+'map_temp_{}_oom{}.pdf'.format(snap.name, oom))
-        plt.clf()
+            r = np.sum(np.array(s['pos'].in_units('pc'), dtype=np.float64)**2, axis=1)
+            max_r_pc = np.nanmax(r)
+            min_r_pc = np.nanmin(r)
+            ooms = max(int(np.log10(max_r_pc/min_r_pc)), 1)
+            for oom in range(ooms):   # todo make this better...
+                r_pc = max_r_pc/10**oom
+                extent = (-r_pc, r_pc, -r_pc, r_pc)
+                _map = pynbody.plot.sph.image(s.gas, width=r_pc, units="m_p cm**-2", noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
+                plt.title('gas')
+                plt.imshow(np.log10(_map), extent=extent, origin='lower')
+                plt.colorbar(label=r'log gas column density $\int \rho dz$ [$m_p cm^{-2}$]')
+                plt.xlabel('x [pc]')
+                plt.ylabel('y [pc]')
+                plt.savefig(output_dir +'inc{}/map_dens_{}_oom{}_inc{}.pdf'.format(inclination, snap.name, oom, inclination))
+                plt.clf()
 
-        s.gas['Pmag'] = np.sum(snap['PartType0', 'MagneticField']**2, axis=1)/(8*np.pi)
-        s.gas['Pmag'].units = 'K' # only to escape Gauss/unitless issue for plotting purposes
-        _map3 = pynbody.plot.sph.image(s.gas, qty='Pmag', width=r_pc, units="K", noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
-        plt.title('gas')
-        plt.imshow(np.log10(_map3), extent=extent, origin='lower')
-        plt.colorbar(label=r'log mean magnetic field pressure $P_\mathrm{mag}$ [dyn/cm$^2$]')
-        plt.xlabel('x [pc]')
-        plt.ylabel('y [pc]')
-        plt.savefig(output_dir+'map_Pmag_{}_oom{}.pdf'.format(snap.name, oom))
-        plt.clf()
+                _map2 = pynbody.plot.sph.image(s.gas, qty='temp', width=r_pc, units="K", noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
+                plt.title('gas')
+                plt.imshow(np.log10(_map2), extent=extent, origin='lower')
+                plt.colorbar(label=r'log mean gas temperature $T$ [$K$]')
+                plt.xlabel('x [pc]')
+                plt.ylabel('y [pc]')
+                plt.savefig(output_dir +'inc{}/map_temp_{}_oom{}_inc{}.pdf'.format(inclination, snap.name, oom, inclination))
+                plt.clf()
 
-        s.gas['plasma beta'] = np.array(snap.dens0.to('g cm**-3')/(2*1.67262192e-24)*c.k_B.to('erg K**-1')*snap.temp0.to('K'), dtype=np.float64)/np.array(s.gas['Pmag'], dtype=np.float64)
-        s.gas['plasma beta'].units = 'K' # only to escape unitless issue for plotting purposes
-        _map4 = pynbody.plot.sph.image(s.gas, qty='plasma beta', width=r_pc, units='K', noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
-        plt.title('gas')
-        plt.imshow(np.log10(_map4), extent=extent, origin='lower')
-        plt.colorbar(label=r'log mean gas $\beta_\mathrm{plasma}$')
-        plt.xlabel('x [pc]')
-        plt.ylabel('y [pc]')
-        plt.savefig(output_dir+'map_plasmabeta_{}_oom{}.pdf'.format(snap.name, oom))
-        plt.clf()
+                s.gas['Pmag'] = np.sum(snap['PartType0', 'MagneticField']**2, axis=1)/(8*np.pi)
+                s.gas['Pmag'].units = 'K' # only to escape Gauss/unitless issue for plotting purposes
+                _map3 = pynbody.plot.sph.image(s.gas, qty='Pmag', width=r_pc, units="K", noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
+                plt.title('gas')
+                plt.imshow(np.log10(_map3), extent=extent, origin='lower')
+                plt.colorbar(label=r'log mean magnetic field pressure $P_\mathrm{mag}$ [dyn/cm$^2$]')
+                plt.xlabel('x [pc]')
+                plt.ylabel('y [pc]')
+                plt.savefig(output_dir +'inc{}/map_Pmag_{}_oom{}_inc{}.pdf'.format(inclination, snap.name, oom, inclination))
+                plt.clf()
+
+                s.gas['plasma beta'] = np.array(snap.dens0.to('g cm**-3')/(2*1.67262192e-24)*c.k_B.to('erg K**-1')*snap.temp0.to('K'), dtype=np.float64)/np.array(s.gas['Pmag'], dtype=np.float64)
+                s.gas['plasma beta'].units = 'K' # only to escape unitless issue for plotting purposes
+                _map4 = pynbody.plot.sph.image(s.gas, qty='plasma beta', width=r_pc, units='K', noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
+                plt.title('gas')
+                plt.imshow(np.log10(_map4), extent=extent, origin='lower')
+                plt.colorbar(label=r'log mean gas $\beta_\mathrm{plasma}$')
+                plt.xlabel('x [pc]')
+                plt.ylabel('y [pc]')
+                plt.savefig(output_dir +'inc{}/map_plasmabeta_{}_oom{}_inc{}.pdf'.format(inclination, snap.name, oom, inclination))
+                plt.clf()
 
     log_timing()
 

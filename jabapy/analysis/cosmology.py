@@ -1,8 +1,8 @@
 import numpy as np
 from scipy.integrate import quad
 
-import ..units as u
-import ..constants as c
+from ..utils import constants as c
+from ..utils import units as u
 
 
 def comoving_distance(z, z0=0.0, h=c.DEFAULT_h, Ode0=c.DEFAULT_Ode0, Om0=c.DEFAULT_Om0, Or0=c.DEFAULT_Or0, Ok0=c.DEFAULT_Ok0, tol=1e-3):

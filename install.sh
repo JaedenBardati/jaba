@@ -452,12 +452,12 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         printf "alias jaba-update=\"(cd ${REPO_LOCATION}; bash ./uninstall.sh; git pull origin; bash ./install.sh;); source '$HOME/.bashrc';\"\n"
 
         printf "\n#python environment\n"
-	printf "activate_jaba_python_environment () { %s }\n" "${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}"
-	printf "export -f activate_jaba_python_environment "'&> /dev/null'"\n"
+	    printf "activate_jaba_python_environment () { %s }\n" "${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}"
+	    printf "export -f activate_jaba_python_environment "'&> /dev/null'"\n"
         printf "deactivate_jaba_python_environment () { %s }\n" "${DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}"
-	printf "export -f deactivate_jaba_python_environment "'&> /dev/null'"\n"
-	printf "alias jaba-activate=\"activate_jaba_python_environment;\"\n"
-	printf "alias jaba-deactivate=\"deactivate_jaba_python_environment;\"\n"
+	    printf "export -f deactivate_jaba_python_environment "'&> /dev/null'"\n"
+	    printf "alias jaba-activate=\"activate_jaba_python_environment;\"\n"
+	    printf "alias jaba-deactivate=\"deactivate_jaba_python_environment;\"\n"
         printf "alias pyenv='$PYENVSH_FILE'\n"
         printf "alias py='pyenv'\n"
         if [[ ! "$SCHEDULER_CMD" == "" ]]; then
@@ -481,9 +481,11 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             printf "alias jaba-edit-todo=\"vim ${REPO_LOCATION}/TODO.txt;\"\n"
             printf "alias jaba-pull=\"(cd ${REPO_LOCATION}; git pull origin;)\"\n"
             printf "alias jaba-status=\"(cd ${REPO_LOCATION}; git status;)\"\n"
-	    printf "alias jaba-diff=\"(cd ${REPO_LOCATION}; git diff;)\"\n"
-	    printf "alias jaba-commit=\"(cd ${REPO_LOCATION}; git add .; git commit;)\"\n"
+	        printf "alias jaba-diff=\"(cd ${REPO_LOCATION}; git diff;)\"\n"
+	        printf "alias jaba-commit=\"(cd ${REPO_LOCATION}; git add .; git commit;)\"\n"
             printf "alias jaba-push=\"(cd ${REPO_LOCATION}; git push origin;)\"\n"
+            printf "alias jaba-fetch=\"(cd ${REPO_LOCATION}; git fetch origin;)\"\n"
+            printf "alias jaba-softupdate=\"(cd ${REPO_LOCATION}; git pull origin; bash ./install.sh;); source '$HOME/.bashrc';\"\n"
         fi
 
         read -p "Also add Jaeden's other (non-jaba) general aliases? [y/n] " add_general_aliases

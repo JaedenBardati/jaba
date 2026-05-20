@@ -25,10 +25,10 @@ fi
 ##    The first file argument specifies a jupyter notebook file to run. Leaving this empty launches jupyter notebook interactively.
 if [ "${1}" == "" ]; then
     echo "Launching jupyter notebook ..."
-    ${JABA_JUPYTER_CMD}
+    ${JABA_JUPYTER_CMD} --no-browser
 else
     echo "Launching jupyter notebook with file ${1} ..."
-    ${JABA_JUPYTER_CMD} ${1} ${@:2}
+    ${JABA_JUPYTER_CMD} --no-browser ${1} ${@:2}
 fi
 
 ############

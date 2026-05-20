@@ -9,8 +9,21 @@ setup(
     author='Jaeden Bardati',
     description='A package with a bunch of code I regularly use. Primarily focused on analysis of MHD simulation data.',
     long_description=long_description,
-    package_dir={'jaba': 'jabapy'},
-    packages=['jaba'],
+    package_dir={
+        'jaba': 'jabapy',
+        'jaba.analysis': 'jabapy/analysis',
+        'jaba.apps': 'jabapy/apps',
+        'jaba.io': 'jabapy/io',
+        'jaba.utils': 'jabapy/utils',
+
+    },
+    packages=[
+        'jaba',
+        'jaba.analysis',
+        'jaba.apps',
+        'jaba.io',
+        'jaba.utils',
+    ],
     python_requires='>=3.7',
     install_requires=[
                       'numpy', ##==1.21.6
