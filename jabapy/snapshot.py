@@ -110,6 +110,10 @@ class HDF5_Snapshot:
         return self._available_datasets
 
     @staticmethod
+    def _get_dataset_path(particle_type, dataset_name):
+        return particle_type + '/' + dataset_name
+
+    @staticmethod
     def _get_dataset_attr_name(particle_type, dataset_name):
         return '_dataset_' + particle_type + '_' + dataset_name
 
@@ -120,7 +124,7 @@ class HDF5_Snapshot:
                 raise KeyError('Particle type "{}" not recognized. Use "particle_types" attribute for a list.'.format(particle_type))
             if dataset_name not in self._dataset_names(particle_type):
                 raise KeyError('Data set {} for particle type "{}" not recognized.'.format(dataset_name, particle_type))
-            dataset_path = particle_type + '/' + dataset_name
+            dataset_path = self._get_dataset_path(particle_type, dataset_name)
             data = hdf5.get_dataset(self.filepath, dataset_path)
             if nosave:
                 return data
@@ -168,30 +172,84 @@ class HDF5_Snapshot:
             raise KeyError('Unrecognized key "{}". Must be a 2-tuple where the first instance is a particle type and the second is a dataset entry. Alternatively, you can retrieve the dataset names by just passing the particle type alone'.format(key))
         
     
+    def _write_dataset(self, particle_type, dataset_name, data, overwrite=False):
+        """Writes a dataset to the snapshot file. If overwrite is False, will not overwrite existing datasets."""
+        _attr = self._get_dataset_attr_name(particle_type, dataset_name)
+        hdf5._write_dataset(self.filepath, 
+                            self._get_dataset_path(particle_type, dataset_name), 
+                            data, 
+                            overwrite=overwrite
+        )
+        setattr(self, _attr, data)
+
+    def _write_data(self, data_dict, overwrite=False):
+        """Writes multiple datasets to the snapshot file from a dictionary of (particle_type, dataset_name): data pairs. If overwrite is False, will not overwrite existing datasets.
+        This is more efficient than writing each dataset individually, as it only opens the file once."""
+        hdf5._write_data(self.filepath, data_dict, overwrite=overwrite)
+        for (particle_type, dataset_name), data in data_dict.items():
+            setattr(self, self._get_dataset_attr_name(particle_type, dataset_name), data)
+
+    def _delete_dataset(self, particle_type, dataset_name):
+        """Deletes a dataset from the snapshot file and from the class instance."""
+        _attr = self._get_dataset_attr_name(particle_type, dataset_name)
+        hdf5._delete_dataset(self.filepath, self._get_dataset_path(particle_type, dataset_name))
+        if hasattr(self, _attr):
+            delattr(self, _attr)
+
+    def _write_metadata(self, metadata_dict, overwrite=False):
+        """Writes metadata to the snapshot file. If overwrite is False, will not overwrite existing metadata."""
+        self.metadata # call to ensure original metadata is loaded
+        hdf5._write_metadata(self.filepath, {self._HEADER_NAME: metadata_dict}, overwrite=overwrite)
+        for key, value in metadata_dict.items():
+            self._attributes[key] = value
+
+    def _rename_dataset(self, particle_type, old_dataset_name, new_dataset_name):
+        """Renames a dataset in the snapshot file and updates the class instance."""
+        _old_attr = self._get_dataset_attr_name(particle_type, old_dataset_name)
+        _new_attr = self._get_dataset_attr_name(particle_type, new_dataset_name)
+        hdf5._rename_dataset(self.filepath, 
+                            self._get_dataset_path(particle_type, old_dataset_name), 
+                            self._get_dataset_path(particle_type, new_dataset_name)
+        )
+        if hasattr(self, _old_attr):
+            data = getattr(self, _old_attr)
+            setattr(self, _new_attr, data)
+            delattr(self, _old_attr)
+
+    def _rename_metadata(self, old_key, new_key):
+        """Renames a metadata key in the snapshot file and updates the class instance."""
+        self.metadata # call to ensure original metadata is loaded
+        hdf5._rename_metadata(self.filepath, self._HEADER_NAME, old_key, new_key)
+        if old_key in self._attributes:
+            value = self._attributes[old_key]
+            del self._attributes[old_key]
+            self._attributes[new_key] = value
+
 
 
 class Basic_GIZMO_Snapshot(HDF5_Snapshot):
     """
     Class for GIZMO specific snapshots. Uses metadata to infer code units to CGS conversions.
     Uses GIZMO standard formatting: http://www.tapir.caltech.edu/~phopkins/Site/GIZMO_files/gizmo_documentation.html
-    YOU MUST DOUBLE CHECK THESE UNITS! Add new particle data names to _DATASET_UNIT_DICT. 
+    YOU MUST DOUBLE CHECK THESE UNITS! Add new particle data names to _DATASET_UNITS. 
     """
 
-    _COMOVING_PHYSICAL_ADJUSTMENT = 'comoving' 
-    _TIME_THAT_IS_POSSIBLY_A_SCALE_FACTOR = 'time'
-    _DATASET_UNIT_DICT = { 
+    _IS_COMOVING_UNIT = 'is_comoving'
+    _TIME_UNIT_THAT_COULD_BE_A_SCALE_FACTOR = 'time'
+    _DATASET_UNITS = { 
         # powers of each composite unit (mass, length, velocity) from the default (physical) unit system and denote if it is comoving (which will factor scale factor in to dimensional analysis).
         # OR 'time' denoting that, when the simulation is cosmological, the dataset is a scale factor,
         # OR a fixed conversion factor returning jaba units, 
         # OR None if no units. 
-        'Masses': {'mass': 1, _COMOVING_PHYSICAL_ADJUSTMENT: False},
-        'Velocities': {'velocity': 1, _COMOVING_PHYSICAL_ADJUSTMENT: True},
-        'Coordinates': {'length': 1, _COMOVING_PHYSICAL_ADJUSTMENT: True},
-        'Density': {'mass': 1, 'length': -3, _COMOVING_PHYSICAL_ADJUSTMENT: True},
-        'SmoothingLength': {'length': 1, _COMOVING_PHYSICAL_ADJUSTMENT: True},
+        'Masses': {'mass': 1, _IS_COMOVING_UNIT: False},
+        'Velocities': {'velocity': 1, _IS_COMOVING_UNIT: True},
+        'Coordinates': {'length': 1, _IS_COMOVING_UNIT: True},
+        'Density': {'mass': 1, 'length': -3, _IS_COMOVING_UNIT: True},
+        'SmoothingLength': {'length': 1, _IS_COMOVING_UNIT: True},
+        'KernelMaxRadius': {'length': 1, _IS_COMOVING_UNIT: True}, # this is the new "smoothing length" (for MFM/MFV?) in the latest version! 
         'Pressure': {'mass': 1, 'length': -3, 'velocity': 2},  # the rest of the units here need to be checked if they are comoving or not - I assume they are all output as physical units
         'Acceleration': {'mass': 0, 'length': -1, 'velocity': 2},
-        'InternalEnergy': {'velocity': 2},
+        'InternalEnergy': {'velocity': 2, _IS_COMOVING_UNIT: False},
         'Potential': {'velocity': 2},
         'Temperature': u.K,
         'PhotonEnergy': {'mass': 1, 'velocity': 2},
@@ -201,14 +259,18 @@ class Basic_GIZMO_Snapshot(HDF5_Snapshot):
         'RadiativeAcceleration': {'mass': 0, 'length': -1, 'velocity': 2},
         'HydroAcceleration': {'mass': 0, 'length': -1, 'velocity': 2},
         'PhotonOpacity': {'length': 2, 'mass': -1},
-        #'PhotonFluxDensity': {'mass': 1, 'velocity': 3, 'length': -3}, # need to check this one
+        'PhotonFluxDensity': {'mass': 1, 'velocity': 3, 'length': -3}, # need to check this one
         'BH_Mass': {'mass': 1},
         'BH_Mdot': {'mass': 1,  'length': -1, 'velocity': 1},
         'BH_Mass_AlphaDisk': {'mass': 1},
+        'BH_AccretionLength': {'length': 1},
+        'BH_Specific_AngMom': {'mass': 0, 'length': 1, 'velocity': 1},
         'MagneticField': u.G,
         'Dust_Temperature': u.K,
         'IRBand_Radiation_Temperature': u.K,
         'StarFormationRate': u.Msun/u.yr,
+        'StarLuminosity_Solar': u.Lsun,
+        'StellarFormationTime': _TIME_UNIT_THAT_COULD_BE_A_SCALE_FACTOR,
         'Metallicity': None,
         'ElectronAbundance': None,
         'NeutralHydrogenAbundance': None,
@@ -219,9 +281,10 @@ class Basic_GIZMO_Snapshot(HDF5_Snapshot):
         'ParticleIDGenerationNumber': None,
         'ParticleIDs': None,
         'DustToGasRatio_Local': None,
-        'StellarFormationTime': _TIME_THAT_IS_POSSIBLY_A_SCALE_FACTOR,
+        'OStarNumber': None,
+        'BH_NProgs': None,
     }
-    _INT64_DATATYPES = ['ParticleIDs', 'ParticleChildIDsNumber', 'ParticleIDGenerationNumber']
+    _INT64_DATATYPES = {'ParticleIDs', 'ParticleChildIDsNumber', 'ParticleIDGenerationNumber'} # read as long long for e.g., particle IDs
 
     @property
     def Cosmological(self):
@@ -437,23 +500,24 @@ class Basic_GIZMO_Snapshot(HDF5_Snapshot):
         if nosave or not hasattr(self, _attr):
             dtype = np.float64 if dataset_name not in self._INT64_DATATYPES else np.int64
             raw_data = super()._get_dataset(particle_type, dataset_name, nosave=True).astype(dtype) 
-            if dataset_name not in self._DATASET_UNIT_DICT.keys():
-                warnings.warn('Dataset "{}" units not recognized. Please adapt Basic_GIZMO_Snapshot._DATASET_UNIT_DICT to include its units. For now, assuming it is unitless...'.format(dataset_name))
+            if dataset_name not in self._DATASET_UNITS.keys():
+                warnings.warn('Dataset "{}" does not have defined units. Please update code if necessary - assuming its unitless.'.format(dataset_name))
+                # If you get this warning, you need to add info on the dataset to _DATASET_UNITS to get units. 
                 return raw_data * u.dimensionless_unscaled
             
-            _unit_metadata = self._DATASET_UNIT_DICT[dataset_name]
+            _unit_metadata = self._DATASET_UNITS[dataset_name]
             if _unit_metadata is None:
                 unit_data = raw_data * u.dimensionless_unscaled
-            elif _unit_metadata == self._TIME_THAT_IS_POSSIBLY_A_SCALE_FACTOR:
+            elif _unit_metadata == self._TIME_UNIT_THAT_COULD_BE_A_SCALE_FACTOR:
                 if self.Cosmological:
                     unit_data = self.scale_factor_to_time(raw_data)
                 else:
                     unit_data = raw_data * self.UnitSystem['length']/self.UnitSystem['velocity']
             elif isinstance(_unit_metadata, dict):
                 factor = 1.0
-                convert_comoving_to_physical = self.Cosmological and self._COMOVING_PHYSICAL_ADJUSTMENT in _unit_metadata and _unit_metadata[self._COMOVING_PHYSICAL_ADJUSTMENT]
+                convert_comoving_to_physical = self.Cosmological and self._IS_COMOVING_UNIT in _unit_metadata and _unit_metadata[self._IS_COMOVING_UNIT]
                 for unit_system_key in _unit_metadata.keys():
-                    if unit_system_key != self._COMOVING_PHYSICAL_ADJUSTMENT:
+                    if unit_system_key != self._IS_COMOVING_UNIT:
                         factor *= self.UnitSystem_In_CGS[unit_system_key] ** _unit_metadata[unit_system_key]
                         if convert_comoving_to_physical:
                             if unit_system_key == 'length':
@@ -467,6 +531,13 @@ class Basic_GIZMO_Snapshot(HDF5_Snapshot):
                 return unit_data
             setattr(self, _attr, unit_data)
         return getattr(self, _attr)
+
+
+
+
+
+
+
 
 
 
@@ -589,7 +660,9 @@ def _add_convenience_properties(cls):
                 )
                 setattr(self, self._get_dataset_attr_name(particle_type, dataset_name), unit_data)
             else:
-                warnings.warn('Dataset {} for particle type {} does not have a defined unit or transformation behavior. Please update Basic_GIZMO_Snapshot._CONVENIENCE_ATTRS to include it if necessary.'.format(dataset_name, particle_type))
+                warnings.warn('Dataset "{}" for particle type "{}" does not have a defined transformation behavior. Please update code if necessary - assuming its a scalar.'.format(dataset_name, particle_type))
+                # If you get this warning, you need to _CONVENIENCE_ATTRS to get transformation behavior. 
+                setattr(self, self._get_dataset_attr_name(particle_type, dataset_name), unit_data.to(u.dimensionless_unscaled))
 
             # add to list of loaded datasets, transformations will be applied on the fly from now on
             self.loaded_datasets.add((particle_type, dataset_name))
@@ -919,6 +992,11 @@ def _add_convenience_properties(cls):
     return cls
 
 
+
+
+
+
+
 @_add_convenience_properties
 class GIZMO_Snapshot(Basic_GIZMO_Snapshot):
     """
@@ -989,19 +1067,23 @@ class GIZMO_Snapshot(Basic_GIZMO_Snapshot):
         ('PartType3', 'MagneticField'): ('B3', 'G', 'vector', None),
         ('PartType4', 'MagneticField'): ('B4', 'G', 'vector', None),
         ('PartType5', 'MagneticField'): ('B5', 'G', 'vector', None),
-        ('PartType0', 'Metallicity'): ('Z0', '1', 'scalar', None),
-        ('PartType1', 'Metallicity'): ('Z1', '1', 'scalar', None),
-        ('PartType2', 'Metallicity'): ('Z2', '1', 'scalar', None),
-        ('PartType3', 'Metallicity'): ('Z3', '1', 'scalar', None),
-        ('PartType4', 'Metallicity'): ('Z4', '1', 'scalar', None),
-        ('PartType5', 'Metallicity'): ('Z5', '1', 'scalar', None),
-        ('PartType0', 'ElectronAbundance'): ('efrac0', '1', 'scalar', None),
-        ('PartType1', 'ElectronAbundance'): ('efrac1', '1', 'scalar', None),
-        ('PartType2', 'ElectronAbundance'): ('efrac2', '1', 'scalar', None),
-        ('PartType3', 'ElectronAbundance'): ('efrac3', '1', 'scalar', None),
-        ('PartType4', 'ElectronAbundance'): ('efrac4', '1', 'scalar', None),
-        ('PartType5', 'ElectronAbundance'): ('efrac5', '1', 'scalar', None),
+        ('PartType0', 'Metallicity'): ('Z0', 1, 'scalar', None),
+        ('PartType1', 'Metallicity'): ('Z1', 1, 'scalar', None),
+        ('PartType2', 'Metallicity'): ('Z2', 1, 'scalar', None),
+        ('PartType3', 'Metallicity'): ('Z3', 1, 'scalar', None),
+        ('PartType4', 'Metallicity'): ('Z4', 1, 'scalar', None),
+        ('PartType5', 'Metallicity'): ('Z5', 1, 'scalar', None),
+        ('PartType0', 'ElectronAbundance'): ('efrac0', 1, 'scalar', None),
+        ('PartType1', 'ElectronAbundance'): ('efrac1', 1, 'scalar', None),
+        ('PartType2', 'ElectronAbundance'): ('efrac2', 1, 'scalar', None),
+        ('PartType3', 'ElectronAbundance'): ('efrac3', 1, 'scalar', None),
+        ('PartType4', 'ElectronAbundance'): ('efrac4', 1, 'scalar', None),
+        ('PartType5', 'ElectronAbundance'): ('efrac5', 1, 'scalar', None),
     }
+
+
+
+
 
 
 

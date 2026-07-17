@@ -6,7 +6,14 @@ import numpy as np
 
 EXTS_SUPPORTED = ('.hdf5', '.h5', '.hdf')
 
-class _OutputH5List(list):
+
+
+## ----------------------------------- ##
+## -------------- Input -------------- ##
+## ----------------------------------- ##
+
+
+class _MultipleHDF5OutputList(list): # internal wrapper indicating that this is a list of outputs from multiple hdf5 files.
     pass
 
 def _handle_file_path_input(func):
@@ -40,7 +47,7 @@ def _handle_file_path_input(func):
             outs = []
             for idx, (fp, _) in sorted(zip(indices, file_path_ext_pair_multifile_list)):
                 outs.append(func(fp, *args, _idx=idx, **kwargs))
-            return _OutputH5List(outs)
+            return _MultipleHDF5OutputList(outs)
         else:
             raise ValueError("Ambiguous file path: multiple hdf5 files found with file name '{}' without all having the standard multi-file structure.".format(file_path))
     return _wrapper
@@ -56,7 +63,7 @@ def _only_open_first_file(func):
 def _combine_output_multi_file_arrays(func):
     def _wrapper(*args, **kwargs):
         outs = _handle_file_path_input(func)(*args, **kwargs)
-        if isinstance(outs, _OutputH5List):
+        if isinstance(outs, _MultipleHDF5OutputList):
             return np.concatenate(outs, axis=0)
         else:
             return outs
@@ -65,20 +72,19 @@ def _combine_output_multi_file_arrays(func):
 def _combine_output_multi_file_dict_of_arrays(func):
     def _wrapper(*args, **kwargs):
         outs = _handle_file_path_input(func)(*args, **kwargs)
-        if isinstance(outs, _OutputH5List):
+        if isinstance(outs, _MultipleHDF5OutputList):
             combined_dict = {}
             for out in outs:
-                for key, value in out:
+                for key, value in out.items():
                     if key in combined_dict:
                         combined_dict[key].append(value)
                         continue
                     combined_dict[key] = [value,]
-            for key, value_list in combined_dict:
+            for key, value_list in combined_dict.items():
                 combined_dict[key] = np.concatenate(value_list, axis=0)
         else:
             return outs
     return _wrapper
-
 
 @_only_open_first_file
 def _test_open(file_path):
@@ -88,6 +94,8 @@ def _test_open(file_path):
     except:
         return 0
     return 1
+
+
 
 
 @_only_open_first_file
@@ -159,3 +167,70 @@ def get_data(file_path, _idx=None):
 #explore('snap_042')
 #get_dataset('blackhole_mergers.hdf5', 'details/mass')
 #get_dataset('snap_042', 'PartType5/Coordinates')
+
+
+
+## ----------------------------------- ##
+## -------------- Output ------------- ##
+## ----------------------------------- ##
+
+def _write_dataset(file_path, dataset_path, data, overwrite=False):
+    '''Targetted write to a given dataset in a given file. If overwrite is False, will not overwrite existing datasets. Creates a new file if it does not exist.'''
+    with h5py.File(file_path, 'a') as f:
+        if dataset_path in f:
+            if overwrite:
+                del f[dataset_path]
+            else:
+                raise ValueError(f"Dataset {dataset_path} already exists in {file_path}. Set overwrite=True to overwrite.")
+        f.create_dataset(dataset_path, data=data)
+
+def _write_data(file_path, data_dict, overwrite=False):
+    '''Writes all data in a dictionary to a given file. If overwrite is False, will not overwrite existing datasets. Creates a new file if it does not exist.'''
+    with h5py.File(file_path, 'a') as f:
+        for dataset_path, data in data_dict.items():
+            if dataset_path in f:
+                if overwrite:
+                    del f[dataset_path]
+                else:
+                    raise ValueError(f"Dataset {dataset_path} already exists in {file_path}. Set overwrite=True to overwrite.")
+            f.create_dataset(dataset_path, data=data)
+
+def _delete_dataset(file_path, dataset_path):
+    '''Deletes a given dataset in a given file.'''
+    with h5py.File(file_path, 'a') as f:
+        if dataset_path in f:
+            del f[dataset_path]
+        else:
+            raise ValueError(f"Dataset {dataset_path} does not exist in {file_path}.")
+
+def _write_metadata(file_path, metadata_dict, overwrite=False):
+    '''Writes all metadata in a dictionary to a given file. If overwrite is False, will not overwrite existing metadata. Creates a new file if it does not exist.'''
+    with h5py.File(file_path, 'a') as f:
+        for group_path, attrs in metadata_dict.items():
+            if group_path not in f:
+                f.create_group(group_path)
+            for attr_name, attr_value in attrs.items():
+                if attr_name in f[group_path].attrs:
+                    if overwrite:
+                        del f[group_path].attrs[attr_name]
+                    else:
+                        raise ValueError(f"Attribute {attr_name} already exists in {group_path} of {file_path}. Set overwrite=True to overwrite.")
+                f[group_path].attrs[attr_name] = attr_value
+
+def _rename_dataset(file_path, old_dataset_path, new_dataset_path):
+    '''Renames a given dataset in a given file.'''
+    with h5py.File(file_path, 'a') as f:
+        if old_dataset_path not in f:
+            raise ValueError(f"Dataset {old_dataset_path} does not exist in {file_path}.")
+        f.move(old_dataset_path, new_dataset_path)
+
+def _rename_metadata(file_path, group_path, old_attr_name, new_attr_name):
+    '''Renames a given attribute in a given group of a given file.'''
+    with h5py.File(file_path, 'a') as f:
+        if group_path not in f:
+            raise ValueError(f"Group {group_path} does not exist in {file_path}.")
+        if old_attr_name not in f[group_path].attrs:
+            raise ValueError(f"Attribute {old_attr_name} does not exist in {group_path} of {file_path}.")
+        value = f[group_path].attrs[old_attr_name]
+        del f[group_path].attrs[old_attr_name]
+        f[group_path].attrs[new_attr_name] = value

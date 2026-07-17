@@ -142,7 +142,7 @@ def get1Dmean(x, qty, weight=None, nbins=100, xmin=None, xmax=None, xlog=False, 
     return x_mid, qty_bins
 
 
-def plot1Dmean(x, qty, weights=None, labels=None, linestyles='-', nbins=100, xlog=False, ylog=False, xlabel=None, ylabel=None, out=None, sum_instead=False, cumsum_instead=False, reverse_x=False, _fig=None, _ax=None):
+def plot1Dmean(x, qty, weights=None, labels=None, linestyles='-', nbins=100, xlog=False, ylog=False, xlabel=None, ylabel=None, out=None, sum_instead=False, cumsum_instead=False, reverse_x=False, _ax=None):
     # TODO DELETE
     if not isinstance(weights, tuple):
         weights = (weights,)
@@ -151,13 +151,13 @@ def plot1Dmean(x, qty, weights=None, labels=None, linestyles='-', nbins=100, xlo
     if not isinstance(linestyles, tuple):
         linestyles = (linestyles,)*len(weights)
     
-    fig, ax, _out, _show_legend = _fig, _ax, None, False
+    ax, _out, _show_legend = _ax, None, False
     for i, w in enumerate(weights):
         _x, _y = get1Dmean(x, qty, weight=w, nbins=nbins, xlog=xlog, sum_instead=sum_instead)
         if i == len(weights) - 1 and out is not None:
             _out = out
             _show_legend = True if any(l is not None for l in labels) else False
-        fig, ax = jv.plot(_x, _y, fig=fig, ax=ax, label=labels[i], ls=linestyles[i], xlog=xlog, ylog=ylog, xlabel=xlabel, ylabel=ylabel, show_legend=_show_legend, out=_out)
+        fig, ax = jv.plot(_x, _y, ax=ax, label=labels[i], ls=linestyles[i], xlog=xlog, ylog=ylog, xlabel=xlabel, ylabel=ylabel, show_legend=_show_legend, out=_out)
     return fig, ax
 
 ########################################################################################################################################################################
@@ -172,7 +172,7 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
 
     # load snapshot/simulation
     log_timing(f"loading snapshot at {filepath} ...")
-    snap = jaba.load(filepath, debugging=True) # should likely be debugging=debugging
+    snap = jaba.load(filepath) # should likely be debugging=debugging
     
     # pre-load required data
     snap.pos0, snap.dens0, snap.mass0,
@@ -229,7 +229,7 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
     _x1, _y1 = get1Dmean(r.to('pc'), snap.mass0.to('Msun'), nbins=100, xlog=True, cumsum_instead=True) # Mencl
     _x2, _y2 = get1Dmean(r.to('pc'), snap.mass0.to('Msun'), nbins=100, xlog=True) # delta m
     fig, ax = jv.plot(_x1, _y1, label=r'$M_\mathrm{encl}$', ls='--', color='black')
-    jv.plot(_x2, _y2, fig=fig, ax=ax, label=r'$\delta m$', ls='-', color='black', xlog=True, ylog=True, xlabel='spherical radius (pc)', ylabel=r'Mass resolution ($M_\odot$)', show_legend=True, out=output_dir+'mass_resolution_{}.pdf'.format(snap.name))
+    jv.plot(_x2, _y2, ax=ax, label=r'$\delta m$', ls='-', color='black', xlog=True, ylog=True, xlabel='spherical radius (pc)', ylabel=r'Mass resolution ($M_\odot$)', show_legend=True, out=output_dir+'mass_resolution_{}.pdf'.format(snap.name))
     _x3, _y3 = get1Dmean(r.to('pc'), np.array((snap.mass0/snap.dens0).to('pc**3'))**(1/3.), nbins=100, xlog=True) # delta r 
     jv.plot(_x3, _y3, label=r'$\delta r$', ls='-', color='black', xlog=True, ylog=True, xlabel='spherical radius (pc)', ylabel=r'Spatial resolution $\delta x$ (pc)', out=output_dir+'spatial_resolution_{}.pdf'.format(snap.name))
 
