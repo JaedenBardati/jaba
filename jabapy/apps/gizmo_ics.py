@@ -51,9 +51,10 @@ def downsample(original_filename, downsampled_filename=None, factor=[32,], ptype
     Simple downsample of a snapshot by a given factor (approximately). By default only downsamples gas. 
     The units of the downsampled snapshot will be the same as the original snapshot (no unit conversion or coordinate transformation).
     If downsampled_filename is None, will overwrite the original file and not make a copy.
+    Note that this is functionally equivalent to the standalone script downsample_gizmo.py
     """
-    extensive_vars={'Masses','SmoothingLength','PhotonEnergy',}
-    length_extensive_vars={'SmoothingLength',} # extensive vars that scale with length, not volume
+    extensive_vars={'Masses','SmoothingLength','KernelMaxRadius','PhotonEnergy',}
+    length_extensive_vars={'SmoothingLength','KernelMaxRadius'} # extensive vars that scale with length, not volume
     position_var='Coordinates'
     npart_metavars={'NumPart_ThisFile','NumPart_Total',} 
 
@@ -110,6 +111,7 @@ def convert_legacy_snapshot_to_new_format(original_filename, new_filename=None, 
     """
     Converts a legacy (2025, c) GIZMO snapshot to the new (2026, c++) GIZMO version format. 
     If new_filename is None, will overwrite the original file and not make a copy.
+    Note that this is functionally equivalent to the standalone script convert_gizmo_legacy_to_cpp.py
     """
     snap, newsnap = _handle_copy(original_filename, new_filename, blacklist=blacklist, whitelist=whitelist)
 
