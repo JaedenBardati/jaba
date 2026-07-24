@@ -8,6 +8,7 @@ from .utils import units as u
 from .utils import coordinates as coord
 from .utils import grid
 from .utils import visual as jv 
+from .utils import datastructures
 from .analysis import dynamics as dyn
 
 ###
@@ -131,23 +132,27 @@ class HDF5_Snapshot:
             setattr(self, _attr, data)
         return getattr(self, _attr)
 
-    def _resolve_particle_type_name(self, key):
+    @staticmethod
+    def _resolve_particle_type_name(key):
         # get particle type name version
         if isinstance(key, int):
-            if key < len(self._SUPPORTED_PARTICLES_TYPES):
-                key = self._SUPPORTED_PARTICLES_TYPES[key]
+            if key < len(HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES):
+                key = HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES[key]
             else:
-                raise KeyError('Unrecognized particle type key "{}". Must be an integer or in the list of supported particle types: {}'.format(self._SUPPORTED_PARTICLES_TYPES))
+                raise KeyError('Unrecognized particle type key "{}". Must be an integer or in the list of supported particle types: {}'.format(HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES))
         return key
 
-    def _resolve_particle_type_number(self, key):
+    @staticmethod
+    def _resolve_particle_type_number(key):
         # get particle type number version
         if isinstance(key, int):
-            return key
-        if key in self._SUPPORTED_PARTICLES_TYPES:
-            return int(str(key)[-1]) #specfic O(1) solution to GIZMO/GADGET only, but in general can be: self._SUPPORTED_PARTICLES_TYPES.index(key), though this is O(n)
+            if 0 <= key and key < len(HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES):
+                return key
+            raise KeyError('Unrecognized particle type key "{}". Must be an integer in the range [0, {})'.format(key, len(HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES)))
+        if key in HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES:
+            return int(str(key)[-1]) #specfic O(1) solution to GIZMO/GADGET only, but in general can be: HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES.index(key), though this is O(n)
         
-        raise KeyError('Unrecognized particle type key "{}". Must be an integer or in the list of supported particle types: {}'.format(self._SUPPORTED_PARTICLES_TYPES))
+        raise KeyError('Unrecognized particle type key "{}". Must be an integer or in the list of supported particle types: {}'.format(HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES))
 
     def _resolve_dataset_key(self, particle_type, dataset_name):
         key = self._resolve_particle_type_name(key)
@@ -543,37 +548,84 @@ class Basic_GIZMO_Snapshot(HDF5_Snapshot):
 
 def _add_convenience_properties(cls):
     #assert isinstance(cls, Snapshot), "Convenience snapshot constructor must be a class that inherits from Snapshot." # TODO
-    assert hasattr(cls, "_CONVENIENCE_ATTRS"), "When constructing a convenience snapshot, you need to specify the convenience attributes."
-
+    assert hasattr(cls, "_STANDARD_DSET_POSSIBLE_DATASET_NAMES"), "When constructing a convenience snapshot, you need to specify the standard datasets."
+    assert hasattr(cls, "_TRANSFORMATION_BEHAVIORS"), "When constructing a convenience snapshot, you need to specify the transformation behaviour."
+    #assert hasattr(cls, "_STANDARD_DSET_ALIASES"), "When constructing a convenience snapshot, you need to specify any standard dataset aliases."
+    _get_standard_dataset_fullname = lambda self, name, particle_type: name + str(self._resolve_particle_type_number(particle_type)) # TODO: need to redo this -> make an object for datasets that you can call with particle type for specific set!!
+    setattr(cls, '_get_standard_dataset_fullname', _get_standard_dataset_fullname)
+    _split_standard_dataset_fullname = lambda self, name: (int(name[-1]), name[:-1]) # TODO: need to redo this ^^ 
+    setattr(cls, '_split_standard_dataset_fullname', _split_standard_dataset_fullname)
+    
     def __init__(self, *args, **kwargs):
         super(cls, self).__init__(*args, **kwargs)
         cls.loaded_datasets = set()  # track which datasets have been loaded
         #cls.derived_datasets = set()  # track which datasets have been derived from loaded datasets # TODO
-        #cls._get_convenience_attr_name = lambda particle_type, name: name + str(cls._resolve_particle_type_number(particle_type)) # TODO
-        
+
+        cls._standard_dataset_name_to_loaded_dataset_name = datastructures.BidirectionalMap() # track which standard dataset have been called and what loaded dataset they correspond to
+
         cls.absolute_centers = {'position': None, 'velocity': None}  # absolute centers of the current position and velocity in terms of the original snapshot orientation
         cls.transformation_matrix = None  # transformation matrix of the current position in terms of the original snapshot orientation
         cls._inv_transformation_matrix = None  
     setattr(cls, '__init__', __init__)
 
     ## Add properties to handle loading datasets via shortcut attributes
-    for (group, dset), (name, unit, *other) in cls._CONVENIENCE_ATTRS.items():
-        @property
-        def prop(self, group=group, dset=dset, name=name, unit=unit):
-            return self[group, dset]
-        @prop.setter
-        def prop(self, value, group=group, dset=dset, unit=unit):
-            if (group, dset) in self.loaded_datasets:
-                setattr(self, u.to_unit(self._get_dataset_attr_name(group, dset), unit, default_unit=unit))
-            else:
-                raise AttributeError('Dataset {} for particle type {} has not yet been loaded. Please load it first.'.format(dset, group))
-        @prop.deleter
-        def prop(self, value, group=group, dset=dset, unit=unit):
-            if (group, dset) in self.loaded_datasets:
-                delattr(self, self._get_dataset_attr_name(group, dset))
-            else:
-                raise AttributeError('Dataset {} for particle type {} has not yet been loaded. Please load it first.'.format(dset, group))
-        setattr(cls, name, prop)
+    for standard_dset_name, dataset_info in cls._STANDARD_DSET_POSSIBLE_DATASET_NAMES.items():
+        for parttype in cls._SUPPORTED_PARTICLES_TYPES:
+            name = cls._get_standard_dataset_fullname(cls, standard_dset_name, parttype) # e.g., name is pos0, whereas standard_dset_name is pos -> should probably organize and standardize this
+
+            def _find_group_dset_pair_from_standard_dset_name(self, _name=name):
+                parttype_number, standard_dset_name = self._split_standard_dataset_fullname(_name)
+                group = self._resolve_particle_type_name(parttype_number)
+                _grp, dset = self._standard_dataset_name_to_loaded_dataset_name.get(_name, (None, None)) # get it if already loaded.
+                assert group == _grp or _grp is None, "Inconsistent group: {} != {}. This should not happen.".format(group, _grp)
+                if _grp is None and dset is None: # not yet loaded, so find it
+                    found = False
+                    for possible_dset in self._STANDARD_DSET_POSSIBLE_DATASET_NAMES[standard_dset_name]:
+                        if possible_dset in self._dataset_names(group):
+                            if found:
+                                raise Exception(f"There are multiple possible datasets that {_name} could refer to and I'm not sure which it is. Possible datasets are {dset} or {possible_dset}.")
+                                # if you get this error, you must change _STANDARD_DSET_POSSIBLE_DATASET_NAMES or adjust the file to remove possible duplicate datasets
+                            dset = possible_dset
+                            found = True
+                    if not found:
+                        raise AttributeError('I cannot find the dataset that corresponds to "{}". It might not be in the snapshot, or you may need to add support for the name recognition.'.format(_name)) # if you get this error: adjust add relevant dataset to _STANDARD_DSET_POSSIBLE_DATASET_NAMES
+                    self._standard_dataset_name_to_loaded_dataset_name[_name] = (group, dset)
+                return group, dset
+            setattr(cls, '_find_group_dset_pair_from_standard_dset_name', _find_group_dset_pair_from_standard_dset_name)
+
+            @property
+            def prop(self, _name=name):
+                group, dset = self._find_group_dset_pair_from_standard_dset_name(_name)
+                return self[group, dset]
+            @prop.setter
+            def prop(self, value, _name=name):
+                # if value has no units, it will assume/infer from the default unit of the dataset
+                group, dset = self._find_group_dset_pair_from_standard_dset_name(_name)
+                if (group, dset) in self.loaded_datasets:
+                    unit = u.get_unit(self[group, dset], default_unit=u.dimensionless_unscaled)
+                else: # overwrite before ever loading it, can't directly match units, but we can try our best
+                    if dset not in self._DATASET_UNITS.keys():
+                        warnings.warn('Dataset "{}" does not have defined units. Please update code if necessary - assuming its unitless.'.format(dset)) # If you get this warning, you need to add info on the dataset to _DATASET_UNITS to get units. 
+                        unit = u.dimensionless_unscaled
+                    else:
+                        unit = 1
+                        for subunit, subunittype in zip((u.cm,u.g,u.cm/u.s), ('mass','length','velocity')):
+                            if subunittype in self._DATASET_UNITS[dset].keys():
+                                unit *= subunit ** self._DATASET_UNITS[dset][subunittype]
+                        unit = u.get_unit(unit, default_unit=u.dimensionless_unscaled) # assume its unitless if no units are defined in that entry
+                value_unit = u.get_unit(value, default_unit=unit)
+                if not value_unit.is_equivalent(unit):
+                    raise ValueError('Value has units "{}" which are not compatible with the dataset units "{}".'.format(value_unit, unit))
+                setattr(self, self._get_dataset_attr_name(group, dset))
+            @prop.deleter
+            def prop(self, _name=name):
+                group, dset = self._find_group_dset_pair_from_standard_dset_name(_name)
+                if (group, dset) in self.loaded_datasets:
+                    delattr(self, self._get_dataset_attr_name(group, dset))
+                    del self._standard_dataset_name_to_loaded_dataset_name[_name]
+                else:
+                    raise AttributeError('Dataset {} for particle type {} has not yet been loaded. Please load it before deleting.'.format(dset, group))
+            setattr(cls, name, prop)
 
     ## Add method to handle general spatial transformations and effect on other tensor-like datasets
     
@@ -615,20 +667,23 @@ def _add_convenience_properties(cls):
                 self.transformation_matrix = _relative_T @ self.transformation_matrix
             self._inv_transformation_matrix = np.linalg.inv(self.transformation_matrix)
 
-        # for each tensor-like dataset, center and transform if the dataset has already been loaded, otherwise store info for later
-        for (_group, _dset), (_name, _unit, _transforms_like, _centers_like, *other) in self._CONVENIENCE_ATTRS.items():
-            if (_transforms_like != 'scalar' and (_group, _dset) in self.loaded_datasets):
-                if verbose:
-                    print(f"Transforming loaded dataset {_name} like a {_transforms_like}...")
-                _attr = self._get_dataset_attr_name(_group, _dset)
-                _data = coord.transform_general_tensor(
-                    getattr(self, _attr), 
-                    center=relative_centers[_centers_like], 
-                    T=_relative_T, 
-                    transforms_like=_transforms_like
-                )
-                setattr(self, _attr, _data)
-                changed_something = True
+        # for each tensor-like dataset, center and transform if the dataset has already been loaded, otherwise do on-the-fly transformation when it is loaded
+        for _dset, (_transforms_like, _centers_like, *other) in self._TRANSFORMATION_BEHAVIORS.items():
+            _transforms_like = _transforms_like if _transforms_like is not None else 'scalar'
+            if _transforms_like != 'scalar':
+                for (_group, _dset2) in self.loaded_datasets: # TODO: this is fine, but it would be better if there was a way of looking at all entries of only one part with e.g. multidimensional dict
+                    if _dset2 != _dset:
+                        continue
+                    if verbose:
+                        print(f"Transforming loaded dataset {_dset} like a {_transforms_like}...")
+                    _attr = self._get_dataset_attr_name(_group, _dset)
+                    _data = coord.transform_general_tensor(
+                        getattr(self, _attr), 
+                        center=relative_centers[_centers_like], 
+                        T=_relative_T, 
+                        transforms_like=_transforms_like
+                    )
+                    setattr(self, _attr, _data)
         if verbose:
             print('Other datasets will be transformed on the fly when loaded.')    
 
@@ -642,27 +697,28 @@ def _add_convenience_properties(cls):
             unit_data = super(cls, self)._get_dataset(particle_type, dataset_name)
             
             # only transform/convert units if there is a standard unit and transformation behavior defined for this dataset
-            if (particle_type, dataset_name) in self._CONVENIENCE_ATTRS.keys(): 
-                _, _unit, _transforms_like, _centers_like, *other = self._CONVENIENCE_ATTRS[(particle_type, dataset_name)]
+            if dataset_name in self._TRANSFORMATION_BEHAVIORS or (particle_type, dataset_name) in self._TRANSFORMATION_BEHAVIORS: 
+                _transforms_like, _centers_like = self._TRANSFORMATION_BEHAVIORS[(particle_type, dataset_name)] if dataset_name in self._TRANSFORMATION_BEHAVIORS else self._TRANSFORMATION_BEHAVIORS[(particle_type, dataset_name)]
 
-                # convert to preferred units
-                if unit_data.unit != _unit:
-                    unit_data = unit_data.to(_unit)
-                    setattr(self, self._get_dataset_attr_name(particle_type, dataset_name), unit_data)
+                # convert to preferred units  # TODO: add unit support too?
+                # if unit_data.unit != _unit:
+                #     unit_data = unit_data.to(_unit)
+                #     setattr(self, self._get_dataset_attr_name(particle_type, dataset_name), unit_data)
                 
                 # transform to new frame if necessary
                 unit_data = coord.transform_general_tensor(
                     unit_data,
-                    center=u.to_unit(self.absolute_centers[_centers_like], _unit, _unit) if _centers_like is not None and self.absolute_centers[_centers_like] is not None else None,
+                    #center=u.to_unit(self.absolute_centers[_centers_like], _unit, _unit) if _centers_like is not None and self.absolute_centers[_centers_like] is not None else None, # TODO: add unit support too?
+                    center=self.absolute_centers[_centers_like] if _centers_like is not None else None,
                     T=self.transformation_matrix,
                     transforms_like=_transforms_like,
                     reverse_order=False
                 )
                 setattr(self, self._get_dataset_attr_name(particle_type, dataset_name), unit_data)
             else:
-                warnings.warn('Dataset "{}" for particle type "{}" does not have a defined transformation behavior. Please update code if necessary - assuming its a scalar.'.format(dataset_name, particle_type))
-                # If you get this warning, you need to _CONVENIENCE_ATTRS to get transformation behavior. 
-                setattr(self, self._get_dataset_attr_name(particle_type, dataset_name), unit_data.to(u.dimensionless_unscaled))
+                #warnings.warn('Dataset "{}" for particle type "{}" does not have a defined transformation behavior. Assuming its a scalar.'.format(dataset_name, particle_type))
+                # If you get this warning, you *may* need to update _TRANSFORMATION_BEHAVIORS for the appropriate transformation behavior. 
+                setattr(self, self._get_dataset_attr_name(particle_type, dataset_name), unit_data)
 
             # add to list of loaded datasets, transformations will be applied on the fly from now on
             self.loaded_datasets.add((particle_type, dataset_name))
@@ -745,17 +801,21 @@ def _add_convenience_properties(cls):
 
     def reset_transform(self):
         """Reset all transformations and centers to original snapshot orientation and position."""
-        for (_group, _dset), (_, _unit, _transforms_like, _centers_like, *other) in self._CONVENIENCE_ATTRS.items():
-            if _transforms_like != 'scalar' and (_group, _dset) in self.loaded_datasets:
-                _attr = self._get_dataset_attr_name(_group, _dset)
-                _data = coord.transform_general_tensor(
-                    getattr(self, _attr), 
-                    center=-self.absolute_centers[_centers_like] if _centers_like is not None and self.absolute_centers[_centers_like] is not None else None,
-                    T=self._inv_transformation_matrix, 
-                    transforms_like=_transforms_like,
-                    reverse_order=True,
-                )
-                setattr(self, _attr, _data)
+        for particle_type, dataset_name in self.loaded_datasets:
+            if dataset_name in self._TRANSFORMATION_BEHAVIORS or (particle_type, dataset_name) in self._TRANSFORMATION_BEHAVIORS: 
+                _transforms_like, _centers_like = self._TRANSFORMATION_BEHAVIORS[(particle_type, dataset_name)] if dataset_name in self._TRANSFORMATION_BEHAVIORS else self._TRANSFORMATION_BEHAVIORS[(particle_type, dataset_name)]
+
+                _transforms_like = _transforms_like if _transforms_like is not None else 'scalar'
+                if _transforms_like != 'scalar':
+                    _attr = self._get_dataset_attr_name(particle_type, dataset_name)
+                    _data = coord.transform_general_tensor(
+                        getattr(self, _attr), 
+                        center=-self.absolute_centers[_centers_like] if _centers_like is not None and self.absolute_centers[_centers_like] is not None else None,
+                        T=self._inv_transformation_matrix, 
+                        transforms_like=_transforms_like,
+                        reverse_order=True,
+                    )
+                    setattr(self, _attr, _data)
         self.absolute_centers = {'position': None, 'velocity': None}
         self.transformation_matrix = None
         self._inv_transformation_matrix = None
@@ -809,12 +869,13 @@ def _add_convenience_properties(cls):
         """Convert all loaded, recognized (convenience) datasets to a pynbody snapshot for use with pynbody's analysis and visualization tools. Add support as needed."""
         assert gas_parttype != star_parttype != dm_parttype, "Gas, star, and dark matter particle types must be different for conversion to pynbody snapshot."
         import pynbody
-        
+
         # quick check for pos to determine length (always required for particle data)
         Ngas, Nstar, Ndm = 0, 0, 0
         for parttype, dataset_name in self.loaded_datasets:
-            shortcut_attr = self._CONVENIENCE_ATTRS[(parttype, dataset_name)][0] # TODO: this will change when I generalize to (name, parttype)
-            shortcut_name, shortcut_parttype = shortcut_attr[:-1], int(shortcut_attr[-1]) # ^^ (for now i just pull it from the front/back, e.g. pos and 0 from pos0)
+            shortcut_name = self._standard_dataset_name_to_loaded_dataset_name[parttype, dataset_name] # TODO: make this contain the partype also
+            shortcut_parttype = self._resolve_particle_type_number(parttype)
+            shortcut_attr = self._get_standard_dataset_fullname(shortcut_name, shortcut_parttype)
             
             if Ngas == 0 and (shortcut_parttype == gas_parttype or parttype == gas_parttype):
                 Ngas = getattr(self, shortcut_attr).shape[0]
@@ -830,8 +891,9 @@ def _add_convenience_properties(cls):
 
         # add datasets
         for parttype, dataset_name in self.loaded_datasets:
-            shortcut_attr = self._CONVENIENCE_ATTRS[(parttype, dataset_name)][0] # TODO: this will change when I generalize to (name, parttype)
-            shortcut_name, shortcut_parttype = shortcut_attr[:-1], int(shortcut_attr[-1]) # ^^ (for now i just pull it from the front/back, e.g. pos and 0 from pos0)
+            shortcut_name = self._standard_dataset_name_to_loaded_dataset_name[parttype, dataset_name] # TODO: make this contain the partype also
+            shortcut_parttype = self._resolve_particle_type_number(parttype)
+            shortcut_attr = self._get_standard_dataset_fullname(shortcut_name, shortcut_parttype)
 
             if shortcut_parttype == gas_parttype or parttype == gas_parttype:
                 _type = 'gas'
@@ -1002,86 +1064,48 @@ class GIZMO_Snapshot(Basic_GIZMO_Snapshot):
     """
     Convenience Wrapper Class around GIZMO snapshot to quickly access common particle data. 
     """
-    _POSITION_UNIT = 'pc'  # TODO: make state machine for units and update these to be consistent with the position, velocity and mass units
-    _VELOCITY_UNIT = 'km/s'
-    _MASS_UNIT = 'Msun'
-    _CONVENIENCE_ATTRS = { # TODO MAYBE: make this a two-way dict so that I can also easily look up (group, dataset) by shortcut attribute name 
-        # (group, dataset) : (shortcut attribute, default unit, transforms_like, centers_like, ...)
-        ('PartType0', 'Coordinates'): ('pos0', _POSITION_UNIT, 'vector', 'position'),
-        ('PartType1', 'Coordinates'): ('pos1', _POSITION_UNIT, 'vector', 'position'),
-        ('PartType2', 'Coordinates'): ('pos2', _POSITION_UNIT, 'vector', 'position'),
-        ('PartType3', 'Coordinates'): ('pos3', _POSITION_UNIT, 'vector', 'position'),
-        ('PartType4', 'Coordinates'): ('pos4', _POSITION_UNIT, 'vector', 'position'),
-        ('PartType5', 'Coordinates'): ('pos5', _POSITION_UNIT, 'vector', 'position'),
-        ('PartType0', 'Velocities'): ('vel0', _VELOCITY_UNIT, 'vector', 'velocity'),
-        ('PartType1', 'Velocities'): ('vel1', _VELOCITY_UNIT, 'vector', 'velocity'),
-        ('PartType2', 'Velocities'): ('vel2', _VELOCITY_UNIT, 'vector', 'velocity'),
-        ('PartType3', 'Velocities'): ('vel3', _VELOCITY_UNIT, 'vector', 'velocity'),
-        ('PartType4', 'Velocities'): ('vel4', _VELOCITY_UNIT, 'vector', 'velocity'),
-        ('PartType5', 'Velocities'): ('vel5', _VELOCITY_UNIT, 'vector', 'velocity'),
-        ('PartType0', 'Masses'): ('mass0', _MASS_UNIT, 'scalar', None),
-        ('PartType1', 'Masses'): ('mass1', _MASS_UNIT, 'scalar', None),
-        ('PartType2', 'Masses'): ('mass2', _MASS_UNIT, 'scalar', None),
-        ('PartType3', 'Masses'): ('mass3', _MASS_UNIT, 'scalar', None),
-        ('PartType4', 'Masses'): ('mass4', _MASS_UNIT, 'scalar', None),
-        ('PartType5', 'Masses'): ('mass5', _MASS_UNIT, 'scalar', None),
-        ('PartType0', 'Density'): ('dens0', 'M_p/cm**3', 'scalar', None),
-        ('PartType1', 'Density'): ('dens1', 'M_p/cm**3', 'scalar', None),
-        ('PartType2', 'Density'): ('dens2', 'M_p/cm**3', 'scalar', None),
-        ('PartType3', 'Density'): ('dens3', 'M_p/cm**3', 'scalar', None),
-        ('PartType4', 'Density'): ('dens4', 'M_p/cm**3', 'scalar', None),
-        ('PartType5', 'Density'): ('dens5', 'M_p/cm**3', 'scalar', None),
-        ('PartType0', 'Temperature'): ('temp0', 'K', 'scalar', None),
-        ('PartType1', 'Temperature'): ('temp1', 'K', 'scalar', None),
-        ('PartType2', 'Temperature'): ('temp2', 'K', 'scalar', None),
-        ('PartType3', 'Temperature'): ('temp3', 'K', 'scalar', None),
-        ('PartType4', 'Temperature'): ('temp4', 'K', 'scalar', None),
-        ('PartType5', 'Temperature'): ('temp5', 'K', 'scalar', None),
-        ('PartType0', 'Acceleration'): ('acc0', 'km/(s Myr)', 'vector', None),
-        ('PartType1', 'Acceleration'): ('acc1', 'km/(s Myr)', 'vector', None),
-        ('PartType2', 'Acceleration'): ('acc2', 'km/(s Myr)', 'vector', None),
-        ('PartType3', 'Acceleration'): ('acc3', 'km/(s Myr)', 'vector', None),
-        ('PartType4', 'Acceleration'): ('acc4', 'km/(s Myr)', 'vector', None),
-        ('PartType5', 'Acceleration'): ('acc5', 'km/(s Myr)', 'vector', None),
-        ('PartType0', 'Potential'): ('pot0', 'erg/g', 'scalar', None),
-        ('PartType1', 'Potential'): ('pot1', 'erg/g', 'scalar', None),
-        ('PartType2', 'Potential'): ('pot2', 'erg/g', 'scalar', None),
-        ('PartType3', 'Potential'): ('pot3', 'erg/g', 'scalar', None),
-        ('PartType4', 'Potential'): ('pot4', 'erg/g', 'scalar', None),
-        ('PartType5', 'Potential'): ('pot5', 'erg/g', 'scalar', None),
-        ('PartType0', 'SmoothingLength'): ('smooth0', 'pc', 'scalar', None),
-        ('PartType1', 'SmoothingLength'): ('smooth1', 'pc', 'scalar', None),
-        ('PartType2', 'SmoothingLength'): ('smooth2', 'pc', 'scalar', None),
-        ('PartType3', 'SmoothingLength'): ('smooth3', 'pc', 'scalar', None),
-        ('PartType4', 'SmoothingLength'): ('smooth4', 'pc', 'scalar', None),
-        ('PartType5', 'SmoothingLength'): ('smooth5', 'pc', 'scalar', None),
-        ('PartType0', 'InternalEnergy'): ('u0', 'erg/g', 'scalar', None),
-        ('PartType1', 'InternalEnergy'): ('u1', 'erg/g', 'scalar', None),
-        ('PartType2', 'InternalEnergy'): ('u2', 'erg/g', 'scalar', None),
-        ('PartType3', 'InternalEnergy'): ('u3', 'erg/g', 'scalar', None),
-        ('PartType4', 'InternalEnergy'): ('u4', 'erg/g', 'scalar', None),
-        ('PartType5', 'InternalEnergy'): ('u5', 'erg/g', 'scalar', None),
-        ('PartType0', 'MagneticField'): ('B0', 'G', 'vector', None),
-        ('PartType1', 'MagneticField'): ('B1', 'G', 'vector', None),
-        ('PartType2', 'MagneticField'): ('B2', 'G', 'vector', None),
-        ('PartType3', 'MagneticField'): ('B3', 'G', 'vector', None),
-        ('PartType4', 'MagneticField'): ('B4', 'G', 'vector', None),
-        ('PartType5', 'MagneticField'): ('B5', 'G', 'vector', None),
-        ('PartType0', 'Metallicity'): ('Z0', 1, 'scalar', None),
-        ('PartType1', 'Metallicity'): ('Z1', 1, 'scalar', None),
-        ('PartType2', 'Metallicity'): ('Z2', 1, 'scalar', None),
-        ('PartType3', 'Metallicity'): ('Z3', 1, 'scalar', None),
-        ('PartType4', 'Metallicity'): ('Z4', 1, 'scalar', None),
-        ('PartType5', 'Metallicity'): ('Z5', 1, 'scalar', None),
-        ('PartType0', 'ElectronAbundance'): ('efrac0', 1, 'scalar', None),
-        ('PartType1', 'ElectronAbundance'): ('efrac1', 1, 'scalar', None),
-        ('PartType2', 'ElectronAbundance'): ('efrac2', 1, 'scalar', None),
-        ('PartType3', 'ElectronAbundance'): ('efrac3', 1, 'scalar', None),
-        ('PartType4', 'ElectronAbundance'): ('efrac4', 1, 'scalar', None),
-        ('PartType5', 'ElectronAbundance'): ('efrac5', 1, 'scalar', None),
+    _TRANSFORMATION_BEHAVIORS = { # TODO: combine with units eventually? plus add unit behaviour?
+        # FORMAT:
+        #  X : (transforms_like, centers_like)
+        # with 
+        #   1) X = dataset_name
+        #   2) X = (particle_type, dataset_name) 
+        # If format 1 is used, all particle types will be treated the same way. Format 2 will overwrite format 1 for a specific particle type.
+        # If not specified, the default behavior is to treat the dataset as a scalar and not to center it.
+        # Passing None in any value sets it to its default behaviour.
+        'Velocities': ('vector', 'velocity'),
+        'Acceleration': ('vector', None),
+        'MagneticField': ('vector', None),
     }
 
-
+    _STANDARD_DSET_POSSIBLE_DATASET_NAMES = { 
+        # when one of these is called for the first time, it will go through all possible versions of these and choose the first one that exists in 
+        # the snapshot and use that one moving forward. An error will be raised if more or less than 1 of the names exist in the snapshot.
+        'pos': ('Coordinates',),
+        'vel': ('Velocities',),
+        'acc': ('Acceleration',),
+        'mass': ('Masses',),
+        'dens': ('Density',),
+        'temp': ('Temperature',),
+        'pot': ('Potential',),
+        'smooth': ('SmoothingLength','KernelMaxRadius'),
+        'mag': ('MagneticField',),
+        'metal': ('Metallicity',),
+        'fe': ('ElectronAbundance',),
+    }
+    # _STANDARD_DSET_ALIASES = { # will be converted to lowercase first # TODO ?
+    #     'position': 'pos',
+    #     'velocity': 'vel',
+    #     'acceleration': 'acc',
+    #     'hsml': 'smooth',
+    #     'density': 'dens',
+    #     'temperature': 'temp',
+    #     'potential': 'pot',
+    #     'electron_abundance': 'fe',
+    #     'metallicity': 'metal',
+    #     'magnetic_field': 'mag',
+    #     'b_field': 'mag',
+    # }
 
 
 
