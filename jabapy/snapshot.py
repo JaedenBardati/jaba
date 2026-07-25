@@ -173,10 +173,23 @@ class HDF5_Snapshot:
             if isinstance(key[0], int):
                 key = (self._resolve_particle_type_name(key[0]), key[1])
             return self._get_dataset(key[0], key[1])
-        else:
-            raise KeyError('Unrecognized key "{}". Must be a 2-tuple where the first instance is a particle type and the second is a dataset entry. Alternatively, you can retrieve the dataset names by just passing the particle type alone'.format(key))
+        elif isinstance(key, str):
+            available_datasets = []  # get available particle types if dataset is specified - TODO: put this in its own function and check that there are no reduncancies with available_datasets, _dataset_names, etc.
+            for parttype in self.particle_types:
+                if key in self._dataset_names(parttype):
+                    available_datasets.append((parttype, key))
+            if available_datasets:
+                return available_datasets
+        raise KeyError('Unrecognized key "{}". Must be a 2-tuple where the first instance is a particle type and the second is a dataset entry. Alternatively, you can retrieve the dataset names by just passing the particle type alone'.format(key))
         
-    
+    def __contains__(self, key):
+        # key can be a particle type / index, dataset name, or a 2-tuple of (particle type / index, dataset name)
+        try:
+            self[key]
+            return True
+        except KeyError:
+            return False
+
     def _write_dataset(self, particle_type, dataset_name, data, overwrite=False):
         """Writes a dataset to the snapshot file. If overwrite is False, will not overwrite existing datasets."""
         _attr = self._get_dataset_attr_name(particle_type, dataset_name)
@@ -870,7 +883,7 @@ def _add_convenience_properties(cls):
             standard_datasets = self._STANDARD_DSET_POSSIBLE_DATASET_NAMES.keys()
         for parttype in self.particle_types:
             for dataset_name in standard_datasets:
-                try:
+                try: # TODO: should probably check available datasets instead
                     getattr(self, dataset_name)[parttype]
                 except KeyError:
                     pass
@@ -882,7 +895,7 @@ def _add_convenience_properties(cls):
 
     def load_all_available_data(self):
         """Load all datasets for all particle types."""
-        pass # TODO : need some general "available_datasets" attribute that is populated when loading the snapshot to make this work ?
+        pass # TODO 
 
 
     ## Commonly-used derived value calculations
@@ -983,27 +996,29 @@ def _add_convenience_properties(cls):
 
 
     ## Visualization methods
-    def quicklook(self, qty=None, Lbox=None, dim=1000, dir='z', logscale=True, show=True, out=None):
+    def quicklook(self, qty=None, parttype=None, Lbox=None, dim=1000, dir='z', logscale=True, show=True, out=None):
         """Quickly visualize a projection of the snapshot quantity you want."""
         if dir not in ['x', 'y', 'z']:
             raise ValueError('dir must be x, y, or z.')
         dirs = [0, 1, 2]
         dirs.remove('xyz'.index(dir)) # convert to axis index
         if qty is None:
-            qty = 'mass0'
+            qty = 'mass'
+        if parttype is None:
+            parttype = 0
         if Lbox is None:
             # try to estimate a reasonable box size
-            est_cen = self.pos0.mean(axis=0)[np.newaxis, :]
-            est_r2 = ((self.pos0 - est_cen)**2).sum(axis=1)
+            est_cen = self.pos[parttype].mean(axis=0)[np.newaxis, :]
+            est_r2 = ((self.pos[parttype] - est_cen)**2).sum(axis=1)
             r_mean = np.sqrt(est_r2).mean()
             r2_mean = est_r2.mean()
             r_std = np.sqrt(r2_mean - r_mean**2)
             Lbox = r_mean + r_std
-        qty_arr = self[qty] if qty in self.available_datasets else getattr(self, qty)
-        maxs = u.get_value(np.ones(2) * u.to_unit(Lbox, self.pos0.unit, self.pos0.unit)/2.0)
+        qty_arr = self[(parttype, qty)] if (parttype, qty) in self else getattr(self, qty)[parttype]
+        maxs = u.get_value(np.ones(2) * u.to_unit(Lbox, self.pos[parttype].unit, self.pos[parttype].unit)/2.0)
         mins = -maxs
         g = grid.bin_particles_direct(
-            self.pos0.value[:, dirs], 
+            self.pos[parttype].value[:, dirs], 
             qty_arr.value, 
             mins, 
             maxs, 
@@ -1018,9 +1033,9 @@ def _add_convenience_properties(cls):
                   extent=(mins[0], maxs[0], mins[1], maxs[1]), 
                   clf_before=True,
                   aspect='equal', 
-                  xlabel='X Position ({})'.format(self.pos0.unit), 
-                  ylabel='Y Position ({})'.format(self.pos0.unit), 
-                  title='Quicklook of {} projection along {} direction'.format(qty, dir), 
+                  xlabel='X Position ({})'.format(self.pos[parttype].unit), 
+                  ylabel='Y Position ({})'.format(self.pos[parttype].unit), 
+                  title='parttype {} {} projection along {} direction'.format(parttype, qty, dir), 
                   colorbar_label='{} {}'.format(qty, '(' + qty_arr.unit + ')' if qty in self.available_datasets and qty_arr.unit != u.dimensionless_unscaled else ''),
                   show=show,
                   out=out,
