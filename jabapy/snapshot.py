@@ -544,91 +544,136 @@ class Basic_GIZMO_Snapshot(HDF5_Snapshot):
 
 
 
+class StandardDataset(): 
+    """ 
+    A class that represents a specific dataset with standard behaviour (e.g., snap.mass, snap.position, snap.velocity). 
+    Access particle type specific datasets via indexing (e.g., snap.mass[0] or snap.mass['PartType0'] for PartType0).
+    """
+    def __init__(self, name, snapshot):
+        self.name = name                # e.g., 'mass', 'position', 'velocity', etc.
+        self._snapshot = snapshot       # parent snapshot object itself
+        self._dataset_names = dict()    # name of the dataset that it corresponds to in the snapshot file, determined on first access for each particle type.
+
+    def _get_dataset_info_for_particle_type(self, particle_type):
+        parttype_name = self._snapshot._resolve_particle_type_name(particle_type)
+        dataset_name = self._dataset_names.get(parttype_name, None)
+        if dataset_name is None:
+            # find the dataset name for this standard dataset and particle type
+            for possible_dset in self._snapshot._STANDARD_DSET_POSSIBLE_DATASET_NAMES[self.name]:
+                if possible_dset in self._snapshot._dataset_names(parttype_name):
+                    if dataset_name is not None:
+                        raise Exception(f"There are multiple possible datasets that {self.name} could refer to and I'm not sure which it is. Possible datasets are {dataset_name} or {possible_dset}.")
+                    dataset_name = possible_dset
+            if dataset_name is None:
+                raise AttributeError(f'I cannot find the dataset that corresponds to "{self.name}". It might not be in the snapshot, or you may need to add support for the name recognition.')  # if you get this error: adjust add relevant dataset to _STANDARD_DSET_POSSIBLE_DATASET_NAMES
+            self._dataset_names[parttype_name] = dataset_name
+        return (parttype_name, dataset_name)
+
+    def __getitem__(self, particle_type):
+        """ Get the dataset for the specified particle type. """
+        parttype_name, dataset_name = self._get_dataset_info_for_particle_type(particle_type)
+        return self._snapshot[parttype_name, dataset_name]
+
+    def __setitem__(self, particle_type, value):
+        """ Set the dataset for the specified particle type. """
+        parttype_name, dataset_name = self._get_dataset_info_for_particle_type(particle_type)
+
+        if (parttype_name, dataset_name) in self.loaded_datasets:
+            # if loaded, get unit from the loaded dataset
+            dset_unit = u.get_unit(self._snapshot[parttype_name, dataset_name], default_unit=u.dimensionless_unscaled)
+        elif dataset_name in self._snapshot._DATASET_UNITS.keys():
+            # if not, guess its cgs in the appropriate dimensions if its in the dataset units dictionary 
+            dset_unit = 1
+            for subunit, subunittype in zip((u.cm,u.g,u.cm/u.s), ('mass','length','velocity')):
+                if subunittype in self._snapshot._DATASET_UNITS[dataset_name].keys():
+                    dset_unit *= subunit ** self._snapshot._DATASET_UNITS[dataset_name][subunittype]
+            dset_unit = u.get_unit(dset_unit, default_unit=u.dimensionless_unscaled)
+        else:
+            # otherwise, assume its unitless if no units are defined in that entry
+            warnings.warn('Dataset "{}" does not have defined units. Please update code if necessary - assuming its unitless.'.format(dataset_name)) # If you get this warning, you need to add info on the dataset to _DATASET_UNITS to get units. 
+            dset_unit = u.dimensionless_unscaled
+        
+        # assume the unit of the value passed is the same as the dataset unit if not specified
+        value_unit = u.get_unit(value, default_unit=dset_unit)
+        
+        # check the dataset unit and the value unit are compatible, otherwise raise an error
+        if not value_unit.is_equivalent(dset_unit):
+            raise ValueError('Value has units "{}" which are not compatible with the dataset units "{}".'.format(value_unit, dset_unit))
+        
+        # update the dataset in memory  # TODO: add a switch to toggle between setting the dataset in the snapshot file or just in memory. - also make sure the method below is standardized in something like _set_dataset()
+        setattr(self, self._snapshot._get_dataset_attr_name(parttype_name, dataset_name), value) 
+
+    def __delitem__(self, particle_type):
+        """ Delete the dataset for the specified particle type. """
+        parttype_name, dataset_name = self._get_dataset_info_for_particle_type(particle_type)
+
+        if (parttype_name, dataset_name) in self.loaded_datasets:
+            # TODO: add a switch to toggle between deleting the dataset in the snapshot file or just in memory. - also make sure the method below is standardized in something like _delete_dataset()
+            delattr(self, self._get_dataset_attr_name(parttype_name, dataset_name))
+        else:
+            raise AttributeError('Dataset {} for particle type {} has not yet been loaded. Please load it before attempting to delete it.'.format(dataset_name, parttype_name))
+
+    def __set__(self, instance, value):
+        raise NotImplementedError("Currently, you cannot set a standard dataset property without specifying its particle type.") # TODO: think about what makes sense here - maybe allow setting the dataset for all particle types at once? only if they are the same size? 
+
+    def __del__(self, instance, value):
+        raise NotImplementedError("Currently, you cannot delete a standard dataset property without specifying its particle type.") # TODO: think about what makes sense here - maybe allow deleting the dataset for all particle types at once?
+
+    def __repr__(self):
+        return f"<Standard dataset '{self.name}' in snapshot '{self._snapshot.name}'>"
+
+
 
 
 def _add_convenience_properties(cls):
     #assert isinstance(cls, Snapshot), "Convenience snapshot constructor must be a class that inherits from Snapshot." # TODO
     assert hasattr(cls, "_STANDARD_DSET_POSSIBLE_DATASET_NAMES"), "When constructing a convenience snapshot, you need to specify the standard datasets."
     assert hasattr(cls, "_TRANSFORMATION_BEHAVIORS"), "When constructing a convenience snapshot, you need to specify the transformation behaviour."
-    #assert hasattr(cls, "_STANDARD_DSET_ALIASES"), "When constructing a convenience snapshot, you need to specify any standard dataset aliases."
-    _get_standard_dataset_fullname = lambda self, name, particle_type: name + str(self._resolve_particle_type_number(particle_type)) # TODO: need to redo this -> make an object for datasets that you can call with particle type for specific set!!
-    setattr(cls, '_get_standard_dataset_fullname', _get_standard_dataset_fullname)
-    _split_standard_dataset_fullname = lambda self, name: (int(name[-1]), name[:-1]) # TODO: need to redo this ^^ 
-    setattr(cls, '_split_standard_dataset_fullname', _split_standard_dataset_fullname)
+    #assert hasattr(cls, "_STANDARD_DSET_ALIASES"), "When constructing a convenience snapshot, you need to specify any standard dataset aliases." # TODO
     
     def __init__(self, *args, **kwargs):
         super(cls, self).__init__(*args, **kwargs)
-        cls.loaded_datasets = set()  # track which datasets have been loaded
-        #cls.derived_datasets = set()  # track which datasets have been derived from loaded datasets # TODO
+        self.loaded_datasets = set()  # track which datasets have been loaded
+        self._loaded_standard_datasets = dict() # track which standard dataset have been called and what loaded dataset they correspond to
+        #self.derived_datasets = set()  # TODO: track which datasets have been derived from loaded datasets -> then add some switch that prioritizes memory vs speed?
 
-        cls._standard_dataset_name_to_loaded_dataset_name = datastructures.BidirectionalMap() # track which standard dataset have been called and what loaded dataset they correspond to
-
-        cls.absolute_centers = {'position': None, 'velocity': None}  # absolute centers of the current position and velocity in terms of the original snapshot orientation
-        cls.transformation_matrix = None  # transformation matrix of the current position in terms of the original snapshot orientation
-        cls._inv_transformation_matrix = None  
+        self.absolute_centers = {'position': None, 'velocity': None}  # absolute centers of the current position and velocity in terms of the original snapshot orientation
+        self.transformation_matrix = None  # transformation matrix of the current position in terms of the original snapshot orientation
+        self._inv_transformation_matrix = None
     setattr(cls, '__init__', __init__)
 
     ## Add properties to handle loading datasets via shortcut attributes
-    for standard_dset_name, dataset_info in cls._STANDARD_DSET_POSSIBLE_DATASET_NAMES.items():
-        for parttype in cls._SUPPORTED_PARTICLES_TYPES:
-            name = cls._get_standard_dataset_fullname(cls, standard_dset_name, parttype) # e.g., name is pos0, whereas standard_dset_name is pos -> should probably organize and standardize this
-
-            def _find_group_dset_pair_from_standard_dset_name(self, _name=name):
-                parttype_number, standard_dset_name = self._split_standard_dataset_fullname(_name)
-                group = self._resolve_particle_type_name(parttype_number)
-                _grp, dset = self._standard_dataset_name_to_loaded_dataset_name.get(_name, (None, None)) # get it if already loaded.
-                assert group == _grp or _grp is None, "Inconsistent group: {} != {}. This should not happen.".format(group, _grp)
-                if _grp is None and dset is None: # not yet loaded, so find it
-                    found = False
-                    for possible_dset in self._STANDARD_DSET_POSSIBLE_DATASET_NAMES[standard_dset_name]:
-                        if possible_dset in self._dataset_names(group):
-                            if found:
-                                raise Exception(f"There are multiple possible datasets that {_name} could refer to and I'm not sure which it is. Possible datasets are {dset} or {possible_dset}.")
-                                # if you get this error, you must change _STANDARD_DSET_POSSIBLE_DATASET_NAMES or adjust the file to remove possible duplicate datasets
-                            dset = possible_dset
-                            found = True
-                    if not found:
-                        raise AttributeError('I cannot find the dataset that corresponds to "{}". It might not be in the snapshot, or you may need to add support for the name recognition.'.format(_name)) # if you get this error: adjust add relevant dataset to _STANDARD_DSET_POSSIBLE_DATASET_NAMES
-                    self._standard_dataset_name_to_loaded_dataset_name[_name] = (group, dset)
-                return group, dset
-            setattr(cls, '_find_group_dset_pair_from_standard_dset_name', _find_group_dset_pair_from_standard_dset_name)
-
+    for _name, _ in cls._STANDARD_DSET_POSSIBLE_DATASET_NAMES.items():
+        # support snap.pos[0] format
+        @property
+        def prop(self, _name=_name):
+            if _name not in self._loaded_standard_datasets:
+                self._loaded_standard_datasets[_name] = StandardDataset(_name, self) # make new object and add to loaded standard datasets dictionary
+            return self._loaded_standard_datasets[_name]  # return the object
+        @prop.setter
+        def prop(self, value, _name=_name):
+            getattr(self, _name).__set__(value) # make sure the standard dataset object is created and loaded + pass on to __set__ to handle
+        @prop.deleter
+        def prop(self, _name=_name):
+            getattr(self, _name).__del__() # make sure the standard dataset object is created and loaded + pass on to __del__ to handle
+            del self._loaded_standard_datasets[_name] # remove from the loaded standard datasets dictionary
+        setattr(cls, _name, prop)
+        
+        # also support old snap.pos0 format (deprecated)
+        for _parttype in cls._SUPPORTED_PARTICLES_TYPES:
             @property
-            def prop(self, _name=name):
-                group, dset = self._find_group_dset_pair_from_standard_dset_name(_name)
-                return self[group, dset]
-            @prop.setter
-            def prop(self, value, _name=name):
-                # if value has no units, it will assume/infer from the default unit of the dataset
-                group, dset = self._find_group_dset_pair_from_standard_dset_name(_name)
-                if (group, dset) in self.loaded_datasets:
-                    unit = u.get_unit(self[group, dset], default_unit=u.dimensionless_unscaled)
-                else: # overwrite before ever loading it, can't directly match units, but we can try our best
-                    if dset not in self._DATASET_UNITS.keys():
-                        warnings.warn('Dataset "{}" does not have defined units. Please update code if necessary - assuming its unitless.'.format(dset)) # If you get this warning, you need to add info on the dataset to _DATASET_UNITS to get units. 
-                        unit = u.dimensionless_unscaled
-                    else:
-                        unit = 1
-                        for subunit, subunittype in zip((u.cm,u.g,u.cm/u.s), ('mass','length','velocity')):
-                            if subunittype in self._DATASET_UNITS[dset].keys():
-                                unit *= subunit ** self._DATASET_UNITS[dset][subunittype]
-                        unit = u.get_unit(unit, default_unit=u.dimensionless_unscaled) # assume its unitless if no units are defined in that entry
-                value_unit = u.get_unit(value, default_unit=unit)
-                if not value_unit.is_equivalent(unit):
-                    raise ValueError('Value has units "{}" which are not compatible with the dataset units "{}".'.format(value_unit, unit))
-                setattr(self, self._get_dataset_attr_name(group, dset))
-            @prop.deleter
-            def prop(self, _name=name):
-                group, dset = self._find_group_dset_pair_from_standard_dset_name(_name)
-                if (group, dset) in self.loaded_datasets:
-                    delattr(self, self._get_dataset_attr_name(group, dset))
-                    del self._standard_dataset_name_to_loaded_dataset_name[_name]
-                else:
-                    raise AttributeError('Dataset {} for particle type {} has not yet been loaded. Please load it before deleting.'.format(dset, group))
-            setattr(cls, name, prop)
+            def prop2(self, _name=_name, _parttype=_parttype):
+                return getattr(self, _name).__getitem__(_parttype) # make sure the standard dataset object is created and loaded + pass on to __getitem__ to handle
+            @prop2.setter
+            def prop2(self, value, _name=_name, _parttype=_parttype):
+                getattr(self, _name).__setitem__(_parttype, value)  # make sure the standard dataset object is created and loaded + pass on to __setitem__ to handle
+            @prop2.deleter
+            def prop2(self, _name=_name, _parttype=_parttype):
+                getattr(self, _name).__delitem__(_parttype)  # make sure the standard dataset object is created and loaded + pass on to __delitem__ to handle
+            setattr(cls, _name + str(cls._resolve_particle_type_number(_parttype)), prop2)
 
     ## Add method to handle general spatial transformations and effect on other tensor-like datasets
-    
+
     def transform(self, center=None, vcenter=None, z=None, y=None, x=None, zdir=None, ydir=None, xdir=None, absolute=True, in_radians=False, strictness=2, verbose=False):
         """
         Center around position and velocity, then rotate the snapshot to a given orientation. 
@@ -668,7 +713,7 @@ def _add_convenience_properties(cls):
             self._inv_transformation_matrix = np.linalg.inv(self.transformation_matrix)
 
         # for each tensor-like dataset, center and transform if the dataset has already been loaded, otherwise do on-the-fly transformation when it is loaded
-        for _dset, (_transforms_like, _centers_like, *other) in self._TRANSFORMATION_BEHAVIORS.items():
+        for _dset, (_transforms_like, _centers_like, *_) in self._TRANSFORMATION_BEHAVIORS.items():
             _transforms_like = _transforms_like if _transforms_like is not None else 'scalar'
             if _transforms_like != 'scalar':
                 for (_group, _dset2) in self.loaded_datasets: # TODO: this is fine, but it would be better if there was a way of looking at all entries of only one part with e.g. multidimensional dict
@@ -698,9 +743,9 @@ def _add_convenience_properties(cls):
             
             # only transform/convert units if there is a standard unit and transformation behavior defined for this dataset
             if dataset_name in self._TRANSFORMATION_BEHAVIORS or (particle_type, dataset_name) in self._TRANSFORMATION_BEHAVIORS: 
-                _transforms_like, _centers_like = self._TRANSFORMATION_BEHAVIORS[(particle_type, dataset_name)] if dataset_name in self._TRANSFORMATION_BEHAVIORS else self._TRANSFORMATION_BEHAVIORS[(particle_type, dataset_name)]
+                _transforms_like, _centers_like, *_ = self._TRANSFORMATION_BEHAVIORS[(particle_type, dataset_name)] if dataset_name in self._TRANSFORMATION_BEHAVIORS else self._TRANSFORMATION_BEHAVIORS[(particle_type, dataset_name)]
 
-                # convert to preferred units  # TODO: add unit support too?
+                # convert to preferred units  # TODO: add default unit support too?
                 # if unit_data.unit != _unit:
                 #     unit_data = unit_data.to(_unit)
                 #     setattr(self, self._get_dataset_attr_name(particle_type, dataset_name), unit_data)
@@ -776,23 +821,22 @@ def _add_convenience_properties(cls):
 
     # center on a single particle
     def center_on(self, particle_type, idx=0, verbose=False):
-        particle_type_number = self._resolve_particle_type_number(particle_type) # TODO: need to generalize this process better
-        center = getattr(self, f'pos{particle_type_number}')[idx]  # TODO: need to generalize this process better
-        vcenter = getattr(self, f'vel{particle_type_number}')[idx]  # TODO: need to generalize this process better
+        center = getattr(self, 'pos')[particle_type][idx]
+        vcenter = getattr(self, 'vel')[particle_type][idx]
         if verbose:
-            print(f"Centering on particle of type {particle_type_number} at index {idx} with position {center} and velocity {vcenter}...")
+            print(f"Centering on particle of type {particle_type} at index {idx} with position {center} and velocity {vcenter}...")
         return self.transform(center=center, vcenter=vcenter, verbose=verbose)
     setattr(cls, 'center_on', center_on)
 
-    def faceon(self, parttype=0, radius=None):
+    def faceon(self, radius=None, particle_type=0):
         """Align the snapshot's coordinate system to the angular momentum vector of a given particle type."""
-        angmom = self.total_angular_momentum(parttype, radius=radius)
+        angmom = self.total_angular_momentum(particle_type, radius=radius)
         return self.transform(zdir=angmom)
     setattr(cls, 'faceon', faceon)
 
-    def edgeon(self, parttype=0, radius=None):
+    def edgeon(self, radius=None, particle_type=0):
         """Align the snapshot's coordinate system to the angular momentum vector of a given particle type."""
-        angmom = self.total_angular_momentum(parttype, radius=radius)
+        angmom = self.total_angular_momentum(particle_type, radius=radius)
         return self.transform(ydir=angmom)
     setattr(cls, 'edgeon', edgeon)
 
@@ -803,9 +847,8 @@ def _add_convenience_properties(cls):
         """Reset all transformations and centers to original snapshot orientation and position."""
         for particle_type, dataset_name in self.loaded_datasets:
             if dataset_name in self._TRANSFORMATION_BEHAVIORS or (particle_type, dataset_name) in self._TRANSFORMATION_BEHAVIORS: 
-                _transforms_like, _centers_like = self._TRANSFORMATION_BEHAVIORS[(particle_type, dataset_name)] if dataset_name in self._TRANSFORMATION_BEHAVIORS else self._TRANSFORMATION_BEHAVIORS[(particle_type, dataset_name)]
-
-                _transforms_like = _transforms_like if _transforms_like is not None else 'scalar'
+                _transforms_like, _centers_like, *_ = self._TRANSFORMATION_BEHAVIORS[(particle_type, dataset_name)] if dataset_name in self._TRANSFORMATION_BEHAVIORS else self._TRANSFORMATION_BEHAVIORS[(particle_type, dataset_name)]
+                _transforms_like = _transforms_like if _transforms_like is not None else 'scalar' # if none, assume scalar (no transformation)
                 if _transforms_like != 'scalar':
                     _attr = self._get_dataset_attr_name(particle_type, dataset_name)
                     _data = coord.transform_general_tensor(
@@ -821,68 +864,70 @@ def _add_convenience_properties(cls):
         self._inv_transformation_matrix = None
     setattr(cls, 'reset_transform', reset_transform)
     
-    def load_basic_data(self, load_types=['pos','vel','mass','dens','smooth']):
-        """Load basic datasets that are needed for most analyses and transformations, e.g. position, velocity, mass, density and smoothing length."""
+    def load_standard_data(self, standard_datasets=None):
+        """Load standard datasets that are needed for most analyses and transformations, e.g. position, velocity, mass, density and smoothing length."""
+        if standard_datasets is None:
+            standard_datasets = self._STANDARD_DSET_POSSIBLE_DATASET_NAMES.keys()
         for parttype in self.particle_types:
-            for dataset_name in load_types:
-                shortcut_attr_name = str(dataset_name) + str(self._resolve_particle_type_number(parttype)) # TODO: this may change when I generalize to (name, parttype)
-                try:  # TODO: should really add a "available_datasets" attribute that is populated when loading the snapshot, checking that would replace this
-                    getattr(self, shortcut_attr_name)
+            for dataset_name in standard_datasets:
+                try:
+                    getattr(self, dataset_name)[parttype]
                 except KeyError:
-                    pass 
-    setattr(cls, 'load_basic_data', load_basic_data)
+                    pass
+    setattr(cls, 'load_standard_data', load_standard_data)
 
     def reload_loaded_data(self):
         """Keeps the same transformation state, but reloads from file and recalculates everything."""
         pass # TODO
 
-    def load_all_available_data(self): # TODO: need some general "available_datasets" attribute that is populated when loading the snapshot to make this work
+    def load_all_available_data(self):
         """Load all datasets for all particle types."""
-        pass # TODO
+        pass # TODO : need some general "available_datasets" attribute that is populated when loading the snapshot to make this work ?
 
 
     ## Commonly-used derived value calculations
 
-    def total_angular_momentum(self, parttype, radius=None): # TODO: need to generalize parttype, datatype somehow?
+    def total_angular_momentum(self, particle_type, radius=None): # TODO: need to generalize parttype, datatype somehow?
         """Calculate total angular momentum vector for a given particle type."""
-        parttype_name, parttype_number = self._resolve_particle_type_name(parttype), self._resolve_particle_type_number(parttype)
-        mass = getattr(self, 'mass' + str(parttype_number))
-        pos = getattr(self, 'pos' + str(parttype_number))
-        vel = getattr(self, 'vel' + str(parttype_number))
+        pos = getattr(self, 'pos')[particle_type]
+        vel = getattr(self, 'vel')[particle_type]
+        mass = getattr(self, 'mass')[particle_type]
         if radius is not None:  # TODO: generalize with some sort of "view" function to mask datasets
             radius = u.to_unit(radius, pos.unit, default_unit=pos.unit)
             rcut = np.linalg.norm(pos, axis=1) < radius # np.linalg.norm works with units
-            mass = mass[rcut]
             pos = pos[rcut]
             vel = vel[rcut]
+            mass = mass[rcut]
         return dyn.total_angular_momentum(mass, pos, vel)
     setattr(cls, 'total_angular_momentum', total_angular_momentum)
 
-
-    ## particle masking?
-    # ... TODO
+    ## TODO: particle masking?
 
 
     ## Convert to another snapshot format for use with other analysis tools
 
     def to_pynbody(self, gas_parttype=0, star_parttype=4, dm_parttype=1, verbose=False):
         """Convert all loaded, recognized (convenience) datasets to a pynbody snapshot for use with pynbody's analysis and visualization tools. Add support as needed."""
+        gas_parttype = self._resolve_particle_type_number(gas_parttype)
+        star_parttype = self._resolve_particle_type_number(star_parttype)
+        dm_parttype = self._resolve_particle_type_number(dm_parttype)
         assert gas_parttype != star_parttype != dm_parttype, "Gas, star, and dark matter particle types must be different for conversion to pynbody snapshot."
         import pynbody
 
         # quick check for pos to determine length (always required for particle data)
         Ngas, Nstar, Ndm = 0, 0, 0
-        for parttype, dataset_name in self.loaded_datasets:
-            shortcut_name = self._standard_dataset_name_to_loaded_dataset_name[parttype, dataset_name] # TODO: make this contain the partype also
-            shortcut_parttype = self._resolve_particle_type_number(parttype)
-            shortcut_attr = self._get_standard_dataset_fullname(shortcut_name, shortcut_parttype)
-            
-            if Ngas == 0 and (shortcut_parttype == gas_parttype or parttype == gas_parttype):
-                Ngas = getattr(self, shortcut_attr).shape[0]
-            if Nstar == 0 and (shortcut_parttype == star_parttype or parttype == star_parttype):
-                Nstar = getattr(self, shortcut_attr).shape[0]
-            if Ndm == 0 and (shortcut_parttype == dm_parttype or parttype == dm_parttype):
-                Ndm = getattr(self, shortcut_attr).shape[0]
+        for std_dset_name, std_dset_obj in self._loaded_standard_datasets.items():
+            for parttype in self.particle_types:
+                if parttype not in [gas_parttype, star_parttype, dm_parttype]:
+                    continue
+                if Ngas == 0 and parttype == gas_parttype:
+                    Ngas = std_dset_obj[parttype].shape[0]
+                if Nstar == 0 and parttype == star_parttype:
+                    Nstar = std_dset_obj[parttype].shape[0]
+                if Ndm == 0 and parttype == dm_parttype:
+                    Ndm = std_dset_obj[parttype].shape[0]
+            if Ngas > 0 and Nstar > 0 and Ndm > 0:
+                break
         if Ngas == 0 and Nstar == 0 and Ndm == 0:
             raise Exception('No dataset found for any specified particle type. Please load datasets you want to convert. See snap.loaded_datasets for reference.')
 
@@ -890,37 +935,37 @@ def _add_convenience_properties(cls):
         s = pynbody.new(gas=Ngas, star=Nstar, dm=Ndm)
 
         # add datasets
-        for parttype, dataset_name in self.loaded_datasets:
-            shortcut_name = self._standard_dataset_name_to_loaded_dataset_name[parttype, dataset_name] # TODO: make this contain the partype also
-            shortcut_parttype = self._resolve_particle_type_number(parttype)
-            shortcut_attr = self._get_standard_dataset_fullname(shortcut_name, shortcut_parttype)
-
-            if shortcut_parttype == gas_parttype or parttype == gas_parttype:
-                _type = 'gas'
-            elif shortcut_parttype == star_parttype or parttype == star_parttype:
-                _type = 'star'
-            elif shortcut_parttype == dm_parttype or parttype == dm_parttype:       
-                _type = 'dm'
-            else:
-                continue
-
-            # add support for new pynbody names here
-            shortcut_name_to_pynbody_name = {'pos': 'pos', 'vel': 'vel', 'mass': 'mass', 'dens': 'rho', 'temp': 'temp', 'smooth': 'smooth'}
-            pynbody_name = shortcut_name_to_pynbody_name.get(shortcut_name, None)
-            if pynbody_name is not None:
-                attr = getattr(self, shortcut_attr)
-                value, pynbody_unit = u.get_value(attr, default_unit=1), u.to_pynbody(u.get_unit(attr, default_unit=1))
-                if _type == 'gas':
+        std_dset_name_to_pynbody_name = {
+            'pos': 'pos', 
+            'vel': 'vel', 
+            'mass': 'mass', 
+            'dens': 'rho', 
+            'temp': 'temp', 
+            'smooth': 'smooth', # add more as needed
+        }
+        for std_dset_name, std_dset_obj in self._loaded_standard_datasets.items():
+            pynbody_name = std_dset_name_to_pynbody_name.get(std_dset_name, None)
+            if pynbody_name is None:
+                continue # if no support for this dataset, skip it
+            for parttype in self.particle_types:
+                if parttype not in [gas_parttype, star_parttype, dm_parttype]:
+                    continue
+                dset = getattr(self, std_dset_name)[parttype]
+                value, pynbody_unit = u.get_value(dset, default_unit=1), u.to_pynbody(u.get_unit(dset, default_unit=1))
+                if parttype == gas_parttype:
+                    _type = 'gas'
                     s.gas[pynbody_name] = value
                     s.gas[pynbody_name].units = pynbody_unit
-                if _type == 'star':
+                elif parttype == star_parttype:
+                    _type = 'star'
                     s.star[pynbody_name] = value
                     s.star[pynbody_name].units = pynbody_unit
-                if _type == 'dm':
+                elif parttype == dm_parttype:       
+                    _type = 'dm'
                     s.dm[pynbody_name] = value
                     s.dm[pynbody_name].units = pynbody_unit
                 if verbose:
-                    print(f"Added dataset {shortcut_attr} attribute as {pynbody_name} dataset for parttype {_type} to pynbody snapshot.")
+                    print(f"Added dataset {std_dset_name} attribute as {pynbody_name} dataset to pynbody snapshot for parttype {_type}.")
         return s
     setattr(cls, 'to_pynbody', to_pynbody)
 
