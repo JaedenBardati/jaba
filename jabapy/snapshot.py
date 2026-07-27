@@ -1015,10 +1015,12 @@ def _add_convenience_properties(cls):
             r_std = np.sqrt(r2_mean - r_mean**2)
             Lbox = r_mean + r_std
         qty_arr = self[(parttype, qty)] if (parttype, qty) in self else getattr(self, qty)[parttype]
-        maxs = u.get_value(np.ones(2) * u.to_unit(Lbox, self.pos[parttype].unit, self.pos[parttype].unit)/2.0)
+        Lbox = u.to_nice_units(Lbox, default_unit=self.pos[parttype].unit) # estimate a good unit for the image
+        pos = self.pos[parttype].to(Lbox.unit) # TODO: allow for the sustained unit conversion of datasets (through e.g. self.pos.to()) - though, likely don't use here.
+        maxs = u.get_value(np.ones(2) * u.to_unit(Lbox, pos.unit, pos.unit)/2.0)
         mins = -maxs
         g = grid.bin_particles_direct(
-            self.pos[parttype].value[:, dirs], 
+            pos.value[:, dirs], 
             qty_arr.value, 
             mins, 
             maxs, 
@@ -1033,8 +1035,8 @@ def _add_convenience_properties(cls):
                   extent=(mins[0], maxs[0], mins[1], maxs[1]), 
                   clf_before=True,
                   aspect='equal', 
-                  xlabel='X Position ({})'.format(self.pos[parttype].unit), 
-                  ylabel='Y Position ({})'.format(self.pos[parttype].unit), 
+                  xlabel='X Position ({})'.format(pos.unit), 
+                  ylabel='Y Position ({})'.format(pos.unit), 
                   title='parttype {} {} projection along {} direction'.format(parttype, qty, dir), 
                   colorbar_label='{} {}'.format(qty, '(' + qty_arr.unit + ')' if qty in self.available_datasets and qty_arr.unit != u.dimensionless_unscaled else ''),
                   show=show,

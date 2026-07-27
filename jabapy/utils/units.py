@@ -4,11 +4,27 @@ from astropy.units import *
 from astropy.constants import c
 
 # custom units
-nounit = def_unit('1', dimensionless_unscaled)
 ld = def_unit('ld', 1.0 * day * c)
-Msol = def_unit('Msol', Msun)
-m_p = def_unit('M_p', M_p)
-add_enabled_units([nounit, ld, Msol, m_p])
+t_H = def_unit('t_H', 14.5 * Gyr, format={'latex': r'$t_\text{H}$'}) # ~ 1/H_0
+add_enabled_units([
+    ld,
+    t_H,
+])
+
+# custom unit aliases
+m_p = M_p
+Msol = M_sun
+solMass = M_sun
+light_day = ld
+hubble_time = t_H
+set_enabled_aliases({
+    '1': dimensionless_unscaled,
+    'm_p': M_p, 
+    'Msol': Msol, 
+    'solMass': Msol,
+    'light_day': ld,
+    'hubble_time': t_H,
+})
 
 
 #### unit checks and conversion convience functions ####
@@ -278,6 +294,69 @@ def from_yt(x):
 
     new_qty = value*Unit(unit_str) if value is not None else Unit(unit_str)
     return new_qty
+
+
+
+# Nice units to use for e.g. quick plotting/estimates
+def to_nice_units(x, default_unit=None):
+    """
+    Returns the value in a "nice" unit for the given quantity x. 
+    This is just something convenient for e.g.  quick plotting or estimates.
+    Requires unit to be defined.
+    """
+    x_unit = get_unit(x, default_unit=default_unit)
+    x_val = get_value(x, default_unit=default_unit)
+    x = abs(x_val) * x_unit
+
+    if x_unit.is_equivalent(cm):
+        if x < 1 * m:
+            # assume it's a wavelength
+            if x >= 1 * mm:
+                return x.to(mm)
+            elif x >= 1 * um:
+                return x.to(um)
+            return x.to(AA)
+        else:
+            # assume it's a distance
+            if x < 0.01 * AU:
+                return x.to(cm)
+            if x < 0.01 * AU:
+                return x.to(cm)
+            if x < 1 * ld:
+                return x.to(AU)
+            if x < 0.1*pc:
+                return x.to(ld)
+            if x < 100*pc:
+                return x.to(pc)
+            if x < 100*kpc:
+                return x.to(kpc)
+            if x < 100*Mpc:
+                return x.to(Mpc)
+            return x.to(Gpc)
+    if x_unit.is_equivalent(g):
+        if x > 1e-10 * Msol:
+            return x.to(Msol)
+        if x > 1e-10 * g:
+            return x.to(g)
+        return x.to(m_p)
+    if x_unit.is_equivalent(s):
+        if 1e-1 < x < 1e1 * ns:
+            return x.to(ns)
+        if x < 1 * hour:
+            return x.to(s)
+        if x < 1 * day:
+            return x.to(hour)
+        if x < 1 * yr:
+            return x.to(day)
+        if x < 1 * Myr:
+            return x.to(yr)
+        if x < 1 * Gyr:
+            return x.to(Myr)
+        if x < 10 * Gyr:
+            return x.to(Gyr)
+        return x.to(t_H)
+    
+    return x  # if no nice unit found, return original quantity
 
 
 
