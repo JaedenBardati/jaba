@@ -14,8 +14,7 @@ A4_PAPER_SIZE              = (8.27, 11.69)
 MATPLOTLIB_DEFAULT_FIGSIZE = (6.4, 4.8)
 
 ## Custom paper settings for different journals
-CUSTOM_PAPER_SETTINGS = {}
-
+CUSTOM_PAPER_SETTINGS = dict()
 
 # ApJ twocolumn preprint
 CUSTOM_PAPER_SETTINGS['APJ_TWOCOLUMN'] = {
@@ -73,6 +72,9 @@ def set_paper_defaults(settings={}, paper=DEFAULT_PAPER, aspect=DEFAULT_FIGURE_A
 
     settings['figure.figsize'] = figsize
     settings['font.size'] = fontsize
+    settings['xtick.labelsize'] = fontsize
+    settings['ytick.labelsize'] = fontsize
+    settings['legend.fontsize'] = fontsize
     return settings
 
 ###############################################
@@ -80,7 +82,7 @@ def set_paper_defaults(settings={}, paper=DEFAULT_PAPER, aspect=DEFAULT_FIGURE_A
 ###############################################
 
 ## Actually adjust parameters
-matplotlib.rcParams['figure.figsize'] = construct_paper_figsize()
+#matplotlib.rcParams.update(set_paper_defaults())
 matplotlib.rcParams['figure.dpi'] = 100   # plt.show resolution
 matplotlib.rcParams['savefig.dpi'] = 300  # plt.savefig resolution
 if 'figure.constrained_layout.use' in matplotlib.rcParams:
@@ -91,7 +93,6 @@ else:
 matplotlib.rcParams["savefig.bbox"] = "tight"
 matplotlib.rcParams['savefig.pad_inches'] = 0.05  # mpl default is 0.1
 
-matplotlib.rcParams['font.size'] = CUSTOM_PAPER_SETTINGS[DEFAULT_PAPER]['font_size']  # TODO replace with set_paper_defaults()
 matplotlib.rcParams['axes.linewidth'] = 1.25
 matplotlib.rcParams['xtick.direction'] = 'in'
 matplotlib.rcParams['ytick.direction'] = 'in'
@@ -103,16 +104,12 @@ matplotlib.rcParams['xtick.major.width'] = 1.5
 matplotlib.rcParams['ytick.major.width'] = 1.5
 matplotlib.rcParams['xtick.minor.width'] = 1.5
 matplotlib.rcParams['ytick.minor.width'] = 1.5
-matplotlib.rcParams['xtick.labelsize'] = CUSTOM_PAPER_SETTINGS[DEFAULT_PAPER]['font_size']  # TODO replace with set_paper_defaults()
-matplotlib.rcParams['ytick.labelsize'] = CUSTOM_PAPER_SETTINGS[DEFAULT_PAPER]['font_size']  # TODO replace with set_paper_defaults()
 matplotlib.rcParams['xtick.bottom'] = True
 matplotlib.rcParams['xtick.top'] = True
 matplotlib.rcParams['ytick.left'] = True
 matplotlib.rcParams['ytick.right'] = True
 
-matplotlib.rcParams['legend.frameon'] = True
-matplotlib.rcParams['legend.loc'] = 0
-matplotlib.rcParams['legend.fontsize'] = 10
+matplotlib.rcParams['legend.frameon'] = False
 
 ###############################################
 ############ BASIC FIGURE WRAPPER #############
@@ -121,7 +118,7 @@ matplotlib.rcParams['legend.fontsize'] = 10
 # any of the below can be passed as settings to functions with basic figure wrapper
 DEFAULT_CUSTOM_SUBPLOT_SETTINGS = {
     # meta settings (settings that override other settings)
-    'fig_paper': None,                          # if set, will override figsize and fontsize settings with that paper defaults
+    'fig_paper': DEFAULT_PAPER,                          # if set, will override figsize and fontsize settings with that paper defaults
     'fig_aspect': None,                         # if set, will override figure aspect ratio (width/height) with this value using paper default width 
     'fig_subtype': None,                        # if set, will override figure subtype (singlecol/doublecol) with this value using paper default width
 
@@ -198,7 +195,12 @@ def basic_figure_wrapper(**wrapper_settings):
 
             # update kwargs with any overriding "meta" settings
             if custom_settings['fig_paper'] is not None:
-                pass # TODO use set_paper_defaults() and other meta settings
+                rc_params = set_paper_defaults(
+                    settings=rc_params, 
+                    paper=custom_settings['fig_paper'], 
+                    aspect=custom_settings['fig_aspect'], 
+                    subtype=custom_settings['fig_subtype'],
+                )
             if kwargs.get('no_ticks', False):
                 rc_params['xtick.major.size'] = 0
                 rc_params['ytick.major.size'] = 0
