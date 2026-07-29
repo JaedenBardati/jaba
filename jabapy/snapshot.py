@@ -629,8 +629,9 @@ class StandardDataset():
     def __set__(self, instance, value):
         raise NotImplementedError("Currently, you cannot set a standard dataset property without specifying its particle type.") # TODO: think about what makes sense here - maybe allow setting the dataset for all particle types at once? only if they are the same size? 
 
-    def __del__(self, instance, value):
-        raise NotImplementedError("Currently, you cannot delete a standard dataset property without specifying its particle type.") # TODO: think about what makes sense here - maybe allow deleting the dataset for all particle types at once?
+    def __del__(self):
+        pass
+        #raise NotImplementedError("Currently, you cannot delete a standard dataset property without specifying its particle type.") # TODO: think about what makes sense here - maybe allow deleting the dataset for all particle types at once?
 
     def __repr__(self):
         return f"<Standard dataset '{self.name}' in snapshot '{self._snapshot.name}'>"
@@ -756,7 +757,7 @@ def _add_convenience_properties(cls):
             
             # only transform/convert units if there is a standard unit and transformation behavior defined for this dataset
             if dataset_name in self._TRANSFORMATION_BEHAVIORS or (particle_type, dataset_name) in self._TRANSFORMATION_BEHAVIORS: 
-                _transforms_like, _centers_like, *_ = self._TRANSFORMATION_BEHAVIORS[(particle_type, dataset_name)] if dataset_name in self._TRANSFORMATION_BEHAVIORS else self._TRANSFORMATION_BEHAVIORS[(particle_type, dataset_name)]
+                _transforms_like, _centers_like, *_ = self._TRANSFORMATION_BEHAVIORS[dataset_name] if dataset_name in self._TRANSFORMATION_BEHAVIORS else self._TRANSFORMATION_BEHAVIORS[(particle_type, dataset_name)]
 
                 # convert to preferred units  # TODO: add default unit support too?
                 # if unit_data.unit != _unit:
@@ -860,7 +861,7 @@ def _add_convenience_properties(cls):
         """Reset all transformations and centers to original snapshot orientation and position."""
         for particle_type, dataset_name in self.loaded_datasets:
             if dataset_name in self._TRANSFORMATION_BEHAVIORS or (particle_type, dataset_name) in self._TRANSFORMATION_BEHAVIORS: 
-                _transforms_like, _centers_like, *_ = self._TRANSFORMATION_BEHAVIORS[(particle_type, dataset_name)] if dataset_name in self._TRANSFORMATION_BEHAVIORS else self._TRANSFORMATION_BEHAVIORS[(particle_type, dataset_name)]
+                _transforms_like, _centers_like, *_ = self._TRANSFORMATION_BEHAVIORS[dataset_name] if dataset_name in self._TRANSFORMATION_BEHAVIORS else self._TRANSFORMATION_BEHAVIORS[(particle_type, dataset_name)]
                 _transforms_like = _transforms_like if _transforms_like is not None else 'scalar' # if none, assume scalar (no transformation)
                 if _transforms_like != 'scalar':
                     _attr = self._get_dataset_attr_name(particle_type, dataset_name)
