@@ -468,12 +468,14 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         if [[ ! "$SCHEDULER_CMD" == "" ]]; then
             printf "alias qcsq='$SCHEDULER_CMD $QCSSH_FILE'\n"
         fi
-
-        read -p "Also add Jaeden's jaba development aliases? [y/n] " add_jaba_dev_aliases
+        
+        read -p "Also add jaba development aliases? [y/n] " add_jaba_dev_aliases
         if [[ "$add_jaba_dev_aliases" == "y" ]]; then
             printf "\n#jaba development aliases\n"
             printf "alias jaba-cd=\"cd ${REPO_LOCATION}\"\n"
-	    printf "alias jaba-edit-install=\"vim ${REPO_LOCATION}/install.sh;\"\n"
+            printf "alias jaba-cd-scripts\"cd ${REPO_LOCATION}/scripts\"\n"
+	    printf "alias jaba-pwd\"echo ${REPO_LOCATION}\"\n"
+            printf "alias jaba-edit-install=\"vim ${REPO_LOCATION}/install.sh;\"\n"
             printf "alias jaba-edit-py=\"vim ${PYENVSH_FILE};\"\n"
             printf "alias jaba-edit-pyq=jaba-edit-py\n"
             printf "alias jaba-edit-qcs=\"vim ${QCSSH_FILE}; vim ${REPO_LOCATION}/tools/quickchecksim.py;\"\n"
@@ -493,7 +495,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             printf "\n#non-jaba general aliases\n"
             printf "alias tailf='tail -f'\n"
             if [[ "$SCHEDULER_CMD" == "sbatch" ]]; then
-                printf "alias sq='squeue -u jbardati'\n"
+                printf "alias sq='squeue -u $(whoami)'\n"
             fi
 	    printf "alias ss='source ${BASHRC_FILE}'\n"
         fi
