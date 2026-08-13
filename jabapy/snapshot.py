@@ -8,7 +8,7 @@ from .utils import units as u
 from .utils import coordinates as coord
 from .utils import grid
 from .utils import visual as jv 
-from .utils import datastructures
+from .utils import datastructures as jds
 from .analysis import dynamics as dyn
 
 ###
@@ -20,8 +20,11 @@ from .analysis import dynamics as dyn
 ###  - Separately make a Simulation object composed of a series of snapshot objects that inherit from FullCodeSnapshots, adding on time-based convience functions
 ###  - Generalize loaders using some jaba.io.load()-like function & combine FullCodeSnapshot convience maker stuff and LoaderSnapshot into AbstractSnapshot so that the inheritance is simply AbstractSnapshot -> FullCodeSnapshot (which is where you define units and code conventions, along with any loader dependent quantities if relevant)
 ### 
-### 
+###  
 ###
+# Basic class/function structure:
+#   FILETYPE LOADER (e.g. HDF5_Snapshot) --> SNAPSHOT TYPE CONVENIENCE FUNCTION (e.g. GIZMO_Snapshot) --> STANDARD SNAPSHOT FORM (e.g. Standardized_GIZMO_Snapshot)
+#   QUICK CHECK ANALYSIS <-- GENERAL ANALYSIS + GENERAL PLOTTING
 
 ### TO DO:
     # - add some quick visualization stuff to the convenience snapshot classes
@@ -133,46 +136,31 @@ class HDF5_Snapshot:
         return getattr(self, _attr)
 
     @staticmethod
-    def _resolve_particle_type_name(key):
+    def _resolve_particle_type_name(key, noerror=False):
         # get particle type name version
-        if isinstance(key, int):
-            if key < len(HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES):
-                key = HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES[key]
-            else:
-                raise KeyError('Unrecognized particle type key "{}". Must be an integer or in the list of supported particle types: {}'.format(HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES))
-        return key
+        if isinstance(key, int) and key < len(HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES): # TODO: change to self._SUPPORTED_PARTICLES_TYPES / not static method - or better self.particle_types ?
+            return HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES[key]
+        elif isinstance(key, str) and key in HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES:
+            return key
+        elif not noerror:
+            raise KeyError('Unrecognized particle type key "{}". Must be an integer index of or a string in the list of supported particle types: {}'.format(key, HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES))
 
     @staticmethod
-    def _resolve_particle_type_number(key):
+    def _resolve_particle_type_number(key, noerror=False):
         # get particle type number version
-        if isinstance(key, int):
-            if 0 <= key and key < len(HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES):
-                return key
-            raise KeyError('Unrecognized particle type key "{}". Must be an integer in the range [0, {})'.format(key, len(HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES)))
-        if key in HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES:
-            return int(str(key)[-1]) #specfic O(1) solution to GIZMO/GADGET only, but in general can be: HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES.index(key), though this is O(n)
-        
-        raise KeyError('Unrecognized particle type key "{}". Must be an integer or in the list of supported particle types: {}'.format(HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES))
-
-    def _resolve_dataset_key(self, particle_type, dataset_name):
-        key = self._resolve_particle_type_name(key)
-        if key in self.particle_types:
-            return self._dataset_names(key)
-        elif isinstance(key, tuple) and len(key) == 2:
-            if isinstance(key[0], int):
-                key = (self._resolve_particle_type_name(key[0]), key[1])
-            return self._get_dataset(key[0], key[1])
-        else:
-            raise KeyError('Unrecognized key "{}". Must be a 2-tuple where the first instance is a particle type and the second is a dataset entry. Alternatively, you can retrieve the dataset names by just passing the particle type alone'.format(key))
+        if isinstance(key, int) and (0 <= key and key < len(HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES)):
+            return key
+        elif isinstance(key, str) and key in HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES:
+            return int(str(key)[-1]) #specfic O(1) solution to GIZMO/GADGET only, but in general can be: HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES.index(key), though this is O(n) so TODO should switch to bimap between str and int types
+        elif not noerror:
+            raise KeyError('Unrecognized particle type key "{}". Must be an integer index of or a string in the list of supported particle types: {}'.format(key, HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES))
 
     def __getitem__(self, key):
-        key = self._resolve_particle_type_name(key)
-        if key in self.particle_types:
-            return self._dataset_names(key)
-        elif isinstance(key, tuple) and len(key) == 2:
-            if isinstance(key[0], int):
-                key = (self._resolve_particle_type_name(key[0]), key[1])
-            return self._get_dataset(key[0], key[1])
+        # particle type?
+        pt = self._resolve_particle_type_name(key, noerror=True)
+        if pt is not None and pt in self.particle_types:
+            return self._dataset_names(pt)
+        # dataset name?
         elif isinstance(key, str):
             available_datasets = []  # get available particle types if dataset is specified - TODO: put this in its own function and check that there are no reduncancies with available_datasets, _dataset_names, etc.
             for parttype in self.particle_types:
@@ -180,7 +168,11 @@ class HDF5_Snapshot:
                     available_datasets.append((parttype, key))
             if available_datasets:
                 return available_datasets
-        raise KeyError('Unrecognized key "{}". Must be a 2-tuple where the first instance is a particle type and the second is a dataset entry. Alternatively, you can retrieve the dataset names by just passing the particle type alone'.format(key))
+        # particle type and dataset pair?
+        elif isinstance(key, tuple) and len(key) == 2:
+            pt = self._resolve_particle_type_name(key[0], noerror=False) # first one must be the particle type # TODO: generalize?
+            return self._get_dataset(pt, key[1])
+        raise KeyError('Unrecognized key "{}". Must be a 2-tuple where the first instance is a particle type and the second is a dataset entry. Alternatively, you can retrieve the dataset names by just passing the particle type alone, or particle types for a given dataset.'.format(key))
         
     def __contains__(self, key):
         # key can be a particle type / index, dataset name, or a 2-tuple of (particle type / index, dataset name)
@@ -283,7 +275,7 @@ class Basic_GIZMO_Snapshot(HDF5_Snapshot):
         'BH_Mass_AlphaDisk': {'mass': 1},
         'BH_AccretionLength': {'length': 1},
         'BH_Specific_AngMom': {'mass': 0, 'length': 1, 'velocity': 1},
-        'MagneticField': u.G,
+        'MagneticField': u.G_cgs,
         'Dust_Temperature': u.K,
         'IRBand_Radiation_Temperature': u.K,
         'StarFormationRate': u.Msun/u.yr,
@@ -555,8 +547,6 @@ class Basic_GIZMO_Snapshot(HDF5_Snapshot):
 
 
 
-
-
 class StandardDataset(): 
     """ 
     A class that represents a specific dataset with standard behaviour (e.g., snap.mass, snap.position, snap.velocity). 
@@ -637,7 +627,7 @@ class StandardDataset():
         return f"<Standard dataset '{self.name}' in snapshot '{self._snapshot.name}'>"
 
 
-
+    
 
 def _add_convenience_properties(cls):
     #assert isinstance(cls, Snapshot), "Convenience snapshot constructor must be a class that inherits from Snapshot." # TODO
@@ -649,7 +639,7 @@ def _add_convenience_properties(cls):
         super(cls, self).__init__(*args, **kwargs)
         self.loaded_datasets = set()  # track which datasets have been loaded
         self._loaded_standard_datasets = dict() # track which standard dataset have been called and what loaded dataset they correspond to
-        #self.derived_datasets = set()  # TODO: track which datasets have been derived from loaded datasets -> then add some switch that prioritizes memory vs speed?
+        self._loaded_derived_datasets = dict() # stores derived datasets and their data (todo, make a class for them like above)  # TODO: make work with snap[dataset, ...] and snap.r[...] styles instead of just snap.r(...)? -> then add some switch that prioritizes memory vs speed?
 
         self.absolute_centers = {'position': None, 'velocity': None}  # absolute centers of the current position and velocity in terms of the original snapshot orientation
         self.transformation_matrix = None  # transformation matrix of the current position in terms of the original snapshot orientation
@@ -685,6 +675,75 @@ def _add_convenience_properties(cls):
             def prop2(self, _name=_name, _parttype=_parttype):
                 getattr(self, _name).__delitem__(_parttype)  # make sure the standard dataset object is created and loaded + pass on to __delitem__ to handle
             setattr(cls, _name + str(cls._resolve_particle_type_number(_parttype)), prop2)
+
+    ## Add properties to standardize particle type meanings
+    @property
+    def particle_type_meanings(self):
+        """Returns the (inferred) meaning of a particle type based on its properties."""
+        if not hasattr(self, '_meanings_to_particle_type'):
+            warnings.warn("Particle type meanings have not been set, attempting to infer them from the snapshot properties.")
+            assert hasattr(self, "_infer_particle_type_meanings"), "You must define a _infer_particle_type_meanings method for this convienence class to work here."
+            self._meanings_to_particle_type = jds.BidirectionalMap(self._infer_particle_type_meanings(), strictness=1)
+        return [self._meanings_to_particle_type.inverse[pt] for pt in self.particle_types]
+
+    @particle_type_meanings.setter
+    def particle_type_meanings(self, meanings):
+        """Assign meanings to particle types based on a provided list of meanings."""
+        if isinstance(meanings, dict):
+            if not all(pt in meanings for pt in self.particle_types):
+                raise ValueError("Keys of meanings dictionary must include the available particle types.")
+            if not all(isinstance(m, str) for m in meanings.keys()):
+                raise ValueError("All keys of meanings dictionary must be strings.")
+            if not all(isinstance(pt, str) for pt in meanings.values()):
+                raise ValueError("All values of meanings dictionary must be strings.")
+            if len(set(meanings.values())) != len(meanings.values()):
+                raise ValueError("Meanings dictionary contains duplicate entries. Each meaning must have a unique key.")
+            self._meanings_to_particle_type = jds.BidirectionalMap({m: pt for pt, m in meanings.items()}, strictness=1)
+            if len(self._meanings_to_particle_type) != len(meanings):
+                warnings.warn("There is redundant particle type meaning information you provided that was dropped. Please double check the provided meanings.")
+        elif isinstance(meanings, list):
+            if len(meanings) != len(self.particle_types):
+                raise ValueError("Length of meanings list must match the number of particle types.")
+            if not all(isinstance(m, str) for m in meanings):
+                raise ValueError("All elements of meanings list must be strings.")
+            if len(set(meanings)) != len(meanings):
+                raise ValueError("Meanings list contains duplicate entries. Each meaning must be unique.")
+            self._meanings_to_particle_type = jds.BidirectionalMap({m: pt for m, pt in zip(meanings, self.particle_types)}, strictness=1)
+        else:
+            raise TypeError("Meanings must be provided as a dictionary or a list.")
+    setattr(cls, 'particle_type_meanings', particle_type_meanings)
+
+    def _resolve_particle_type_name(self, key, noerror=False):
+        pt = super(cls, self)._resolve_particle_type_name(key, noerror=True)
+        if pt is not None:
+            return pt
+        elif isinstance(key, str) and (hasattr(self, '_meanings_to_particle_type') or hasattr(self, "_infer_particle_type_meanings")) and key in self.particle_type_meanings: 
+            return self._meanings_to_particle_type[key]
+        elif not noerror:
+            raise KeyError('Unrecognized particle type key "{}". Must be an integer index of or a string in the list of supported particle types ({}), or a string in the particle type meanings.'.format(key, HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES))
+    setattr(cls, '_resolve_particle_type_name', _resolve_particle_type_name)
+
+    def _resolve_particle_type_number(self, key, noerror=False):
+        pt = super(cls, self)._resolve_particle_type_number(key, noerror=True)
+        if pt is not None:
+            return pt
+        elif isinstance(key, str) and (hasattr(self, '_meanings_to_particle_type') or hasattr(self, "_infer_particle_type_meanings")) and key in self.particle_type_meanings:
+            return super(cls, self)._resolve_particle_type_number(self._meanings_to_particle_type[key])
+        elif not noerror:
+            raise KeyError('Unrecognized particle type key "{}". Must be an integer index of or a string in the list of supported particle types ({}), or a string in the particle type meanings.'.format(key, HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES))
+    setattr(cls, '_resolve_particle_type_number', _resolve_particle_type_number)
+
+    def _resolve_particle_type_meaning(self, key, noerror=False):
+        if isinstance(key, str) and (hasattr(self, '_meanings_to_particle_type') or hasattr(self, "_infer_particle_type_meanings")):
+            if key in self.particle_type_meanings:
+                return key
+        pt = self._resolve_particle_type_name(key, noerror=True)
+        if pt is not None:
+            return self._meanings_to_particle_type.inverse[pt]
+        elif not noerror:
+            raise KeyError('Unrecognized particle type key "{}". Must be an integer index of or a string in the list of supported particle types ({}), or a string in the particle type meanings.'.format(key, HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES))
+        
+    setattr(cls, '_resolve_particle_type_meaning', _resolve_particle_type_meaning)
 
     ## Add method to handle general spatial transformations and effect on other tensor-like datasets
 
@@ -734,7 +793,7 @@ def _add_convenience_properties(cls):
                     if _dset2 != _dset:
                         continue
                     if verbose:
-                        print(f"Transforming loaded dataset {_dset} like a {_transforms_like}...")
+                        print(f"Transforming loaded dataset ({_group}, {_dset2}) like a {_transforms_like}...")
                     _attr = self._get_dataset_attr_name(_group, _dset)
                     _data = coord.transform_general_tensor(
                         getattr(self, _attr), 
@@ -745,6 +804,12 @@ def _add_convenience_properties(cls):
                     setattr(self, _attr, _data)
         if verbose:
             print('Other datasets will be transformed on the fly when loaded.')    
+
+        # handle derived datasets - for now just delete them so that they will be recalculated later
+        for key in self._loaded_derived_datasets.keys():
+            if verbose:
+                print(f"Removing derived dataset {key} so that it will be recalculated when next called...")
+            del self._loaded_derived_datasets[key]
 
         return self
     setattr(cls, 'transform', transform)
@@ -764,6 +829,9 @@ def _add_convenience_properties(cls):
                 #     unit_data = unit_data.to(_unit)
                 #     setattr(self, self._get_dataset_attr_name(particle_type, dataset_name), unit_data)
                 
+                #if True: # DEBUG
+                #    print(f"Transforming loaded dataset ({particle_type}, {dataset_name}) like a {_transforms_like} on-the-fly...")
+
                 # transform to new frame if necessary
                 unit_data = coord.transform_general_tensor(
                     unit_data,
@@ -775,6 +843,9 @@ def _add_convenience_properties(cls):
                 )
                 setattr(self, self._get_dataset_attr_name(particle_type, dataset_name), unit_data)
             else:
+                #if True: # DEBUG
+                #    print(f"Loading untransformed loaded dataset ({particle_type}, {dataset_name}) on-the-fly...")
+
                 #warnings.warn('Dataset "{}" for particle type "{}" does not have a defined transformation behavior. Assuming its a scalar.'.format(dataset_name, particle_type))
                 # If you get this warning, you *may* need to update _TRANSFORMATION_BEHAVIORS for the appropriate transformation behavior. 
                 setattr(self, self._get_dataset_attr_name(particle_type, dataset_name), unit_data)
@@ -842,16 +913,18 @@ def _add_convenience_properties(cls):
         return self.transform(center=center, vcenter=vcenter, verbose=verbose)
     setattr(cls, 'center_on', center_on)
 
-    def faceon(self, radius=None, particle_type=0):
+    def faceon(self, radius=None, particle_type=0, verbose=False):
         """Align the snapshot's coordinate system to the angular momentum vector of a given particle type."""
         angmom = self.total_angular_momentum(particle_type, radius=radius)
-        return self.transform(zdir=angmom)
+        if np.allclose(angmom, 0):
+            raise ValueError(f"Angular momentum vector is too small to define a face-on orientation for particle type {particle_type} in radius {radius}.") # double check that you have any particle in that radius at all
+        return self.transform(zdir=angmom, verbose=verbose)
     setattr(cls, 'faceon', faceon)
 
-    def edgeon(self, radius=None, particle_type=0):
+    def edgeon(self, radius=None, particle_type=0, verbose=False):
         """Align the snapshot's coordinate system to the angular momentum vector of a given particle type."""
         angmom = self.total_angular_momentum(particle_type, radius=radius)
-        return self.transform(ydir=angmom)
+        return self.transform(ydir=angmom, verbose=verbose)
     setattr(cls, 'edgeon', edgeon)
 
 
@@ -876,6 +949,8 @@ def _add_convenience_properties(cls):
         self.absolute_centers = {'position': None, 'velocity': None}
         self.transformation_matrix = None
         self._inv_transformation_matrix = None
+        for key in list(self._loaded_derived_datasets.keys()):
+            del self._loaded_derived_datasets[key] # remove all derived datasets from the loaded derived datasets dictionary so they will be recalculated when called
     setattr(cls, 'reset_transform', reset_transform)
     
     def load_standard_data(self, standard_datasets=None):
@@ -899,10 +974,10 @@ def _add_convenience_properties(cls):
         pass # TODO 
 
 
-    ## Commonly-used derived value calculations
+    ## Commonly-used derived value calculations 
 
     def total_angular_momentum(self, particle_type, radius=None): # TODO: need to generalize parttype, datatype somehow?
-        """Calculate total angular momentum vector for a given particle type."""
+        """Calculate total angular momentum vector for a given particle type.""" # TODO: not lazy-loaded since it depends on transformation strongly, but think about this in the future
         pos = getattr(self, 'pos')[particle_type]
         vel = getattr(self, 'vel')[particle_type]
         mass = getattr(self, 'mass')[particle_type]
@@ -914,6 +989,62 @@ def _add_convenience_properties(cls):
             mass = mass[rcut]
         return dyn.total_angular_momentum(mass, pos, vel)
     setattr(cls, 'total_angular_momentum', total_angular_momentum)
+
+    def r(self, particle_type, center=None): # TODO: add to derived datasets and make lazy-loaded (but recompute if transformation changes)
+        """Calculate the radial distance of particles of a given type from a specified center."""
+        particle_type = self._resolve_particle_type_name(particle_type)
+        if not (particle_type, 'r') in self._loaded_derived_datasets:
+            pos = getattr(self, 'pos')[particle_type]
+            if center is not None:
+                return np.linalg.norm(pos - u.to_unit(center, pos.unit, default_unit=pos.unit), axis=1) # no lazy loading if center is specified (and thus non-zero), since it can be arbitrary
+            self._loaded_derived_datasets[(particle_type, 'r')] = np.linalg.norm(pos, axis=1)
+        return self._loaded_derived_datasets[(particle_type, 'r')]
+    setattr(cls, 'r', r)
+
+    def R(self, particle_type, center=None):
+        """Calculate the cylindrical radial distance (x, y) of particles of a given type from a specified center."""
+        particle_type = self._resolve_particle_type_name(particle_type)
+        if not (particle_type, 'R') in self._loaded_derived_datasets:
+            pos = getattr(self, 'pos')[particle_type]
+            if center is not None:
+                return np.linalg.norm(pos[:, :2] - u.to_unit(center[:2], pos.unit, default_unit=pos.unit), axis=1) # no lazy loading if center is specified (and thus non-zero), since it can be arbitrary
+            self._loaded_derived_datasets[(particle_type, 'R')] = np.linalg.norm(pos[:, :2], axis=1)
+        return self._loaded_derived_datasets[(particle_type, 'R')]
+    setattr(cls, 'R', R)
+
+    def theta(self, particle_type, center=None):
+        """Calculate the polar angle of particles of a given type from a specified center."""
+        particle_type = self._resolve_particle_type_name(particle_type)
+        if not (particle_type, 'theta') in self._loaded_derived_datasets:
+            pos = getattr(self, 'pos')[particle_type]
+            if center is not None:
+                return np.arccos((pos[:, 2] - u.to_unit(center[2], pos.unit, default_unit=pos.unit)) / np.linalg.norm(pos - u.to_unit(center, pos.unit, default_unit=pos.unit), axis=1)) # no lazy loading if center is specified (and thus non-zero), since it can be arbitrary
+            self._loaded_derived_datasets[(particle_type, 'theta')] = np.arccos(pos[:, 2] / np.linalg.norm(pos, axis=1))
+        return self._loaded_derived_datasets[(particle_type, 'theta')]
+    setattr(cls, 'theta', theta)
+
+    def phi(self, particle_type, center=None):
+        """Calculate the azimuthal angle of particles of a given type from a specified center."""
+        particle_type = self._resolve_particle_type_name(particle_type)
+        if not (particle_type, 'phi') in self._loaded_derived_datasets:
+            pos = getattr(self, 'pos')[particle_type]
+            if center is not None:
+                return np.arctan2(pos[:, 1] - u.to_unit(center[1], pos.unit, default_unit=pos.unit), pos[:, 0] - u.to_unit(center[0], pos.unit, default_unit=pos.unit)) # no lazy loading if center is specified (and thus non-zero), since it can be arbitrary
+            self._loaded_derived_datasets[(particle_type, 'phi')] = np.arctan2(pos[:, 1], pos[:, 0])
+        return self._loaded_derived_datasets[(particle_type, 'phi')]
+    setattr(cls, 'phi', phi)
+
+    def x(self, particle_type):
+        return getattr(self, 'pos')[particle_type][:, 0]
+    setattr(cls, 'x', x)
+
+    def y(self, particle_type):
+        return getattr(self, 'pos')[particle_type][:, 1]
+    setattr(cls, 'y', y)
+
+    def z(self, particle_type):
+        return getattr(self, 'pos')[particle_type][:, 2]
+    setattr(cls, 'z', z)
 
     ## TODO: particle masking?
 
@@ -1136,6 +1267,7 @@ class GIZMO_Snapshot(Basic_GIZMO_Snapshot):
         # If format 1 is used, all particle types will be treated the same way. Format 2 will overwrite format 1 for a specific particle type.
         # If not specified, the default behavior is to treat the dataset as a scalar and not to center it.
         # Passing None in any value sets it to its default behaviour.
+        'Coordinates': ('vector', 'position'),
         'Velocities': ('vector', 'velocity'),
         'Acceleration': ('vector', None),
         'MagneticField': ('vector', None),
@@ -1153,7 +1285,7 @@ class GIZMO_Snapshot(Basic_GIZMO_Snapshot):
         'pot': ('Potential',),
         'smooth': ('SmoothingLength','KernelMaxRadius'),
         'mag': ('MagneticField',),
-        'metal': ('Metallicity',),
+        'metals': ('Metallicity',),
         'fe': ('ElectronAbundance',),
     }
     # _STANDARD_DSET_ALIASES = { # will be converted to lowercase first # TODO ?
@@ -1170,8 +1302,59 @@ class GIZMO_Snapshot(Basic_GIZMO_Snapshot):
     #     'b_field': 'mag',
     # }
 
+    # TODO: add ...
+    # _STANDARD_PARTICLE_TYPE_MEANINGS = {'gas', 'dm', 'star', 'bh'} # use these for general, non-gizmo specific analysis # TODO put in general snapshot class
+    # _SPECIFIC_PARTICLE_TYPE_MEANINGS = {'gas', 'lores_dm', 'highres_dm', 'sink_bh', 'ssp', 'sink_star'} # use these for a more specific analysis to the code type you use
+    # def _infer_specific_particle_type_meaning(self, pt):
+    #     if 'PartType0' == pt:
+    #         return 'gas'  # PartType0 is always gas in GIZMO, all the rest are ambiguous and must be double checked
+    #     if 'StellarFormationTime' in self.dataset_names[pt]:
+    #         if 'OStarNumber' in self.dataset_names[pt]:
+    #             return 'ssp' 
+    #         if any(s in self.dataset_names[pt] for s in ('ProtoStellarAge','ProtoStellarRadius_inSolar','ProtoStellarStage','ZAMS_Mass')):
+    #             return 'sink_star' 
+    #         if 'PartType4' == pt:
+    #             warnings.warn(f"I'm not fully certain what particle type {pt} is, but I'll assume it's an SSP which is often this type.")
+    #             return 'ssp'
+    #         warnings.warn(f"I'm not fully certain what particle type {pt} is, but I'll assume it's a BH which is sometimes this type.")
+    #         return 'sink_bh' # otherwise, assume its a black hole
+    #     if 'PartType2' == pt:
+    #         warnings.warn(f"I'm not fully certain what particle type {pt} is, but I'll assume it's low resolution dark matter which is usually this type.")
+    #         return 'lores_dm' # often low-res DM if in cosmological simulation
+    #     if 'PartType1' == pt:
+    #         warnings.warn(f"I'm not fully certain what particle type {pt} is, but I'll assume it's high resolution dark matter which is usually this type.")
+    #         return 'highres_dm' # PartType1 is almost always high-res DM in GIZMO -> just assume here it is
+    #     warnings.warn(f"I don't know what particle type {pt} is. Please set it manually if needed.")
+    #     return None
 
+    # def _assign_standard_particle_type_meanings(self, specific_meanings):
+    #     unique_meanings = jds.BidirectionalMap(strictness=1)
+    #     for pt, sm in specific_meanings.items():
+    #         if specific_meanings[pt] == 'gas':
+    #             assert 'gas' not in unique_meanings.inverse, f"There cannot be dupicate gas particle types in GIZMO."
+    #             unique_meanings[pt] = 'gas'
+    #         elif specific_meanings[pt] in ['lores_dm', 'highres_dm']:
+    #             unique_meanings[pt] = 'dm'
+    #             if pt in unique_meanings:
 
+    #         elif specific_meanings[pt] in ['sink_bh', 'ssp', 'sink_star']:
+    #             unique_meanings[pt] = 'star'
+    #     return dict(unique_meanings)
+    
+    # def _infer_particle_type_meanings(self):
+    #     """Infer the meaning of each particle type based on its properties."""
+    #     specific_meanings = dict()
+    #     for parttype in self.particle_types:
+    #         _im = self._infer_specific_particle_type_meaning(parttype)
+    #         assert _im in self._SPECIFIC_PARTICLE_TYPE_MEANINGS or _im is None, f"Particle type {parttype} has an inferred meaning of {_im}, which is not in the list of supported specific meanings: {self._SPECIFIC_PARTICLE_TYPE_MEANINGS}"
+    #         if specific_meanings[parttype] is None:
+    #             warnings.warn(f"I can't seem to infer the meaning of particle type '{parttype}', please set it manually if needed.") # ideally, adjust _infer_specific_particle_type_meaning to work if its something that can be inferred from the data
+    #         if specific_meanings[parttype] not in specific_meanings:
+    #         specific_meanings[parttype] = _im 
+    #     return meanings, unique_meanings
+
+    def _infer_particle_type_meanings(self):
+        raise NotImplementedError("This function is not yet implemented. Please set particle type meanings manually if needed.")
 
 
 def load_gizmo(filepath, debugging=False):

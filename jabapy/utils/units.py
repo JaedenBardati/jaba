@@ -1,3 +1,4 @@
+from fractions import Fraction
 import re
 
 from astropy.units import * 
@@ -6,9 +7,11 @@ from astropy.constants import c
 # custom units
 ld = def_unit('ld', 1.0 * day * c)
 t_H = def_unit('t_H', 14.5 * Gyr, format={'latex': r'$t_\text{H}$'}) # ~ 1/H_0
+G_cgs = def_unit('G_cgs', (g ** Fraction(1, 2)) * (cm ** Fraction(-1, 2)) * (s ** -1), format={'latex': r'$G_\text{cgs}$'})
 add_enabled_units([
     ld,
     t_H,
+    G_cgs,
 ])
 
 # custom unit aliases

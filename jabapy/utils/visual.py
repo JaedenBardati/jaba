@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure as MatplotlibFigure
 from matplotlib.ticker import AutoMinorLocator, LogLocator
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from PIL import Image, ImageChops
 
 ###############################################
 ############## FIGURE SETTINGS  ###############
@@ -30,14 +29,23 @@ CUSTOM_PAPER_SETTINGS['ApJ'] = CUSTOM_PAPER_SETTINGS['APJ_TWOCOLUMN'] # alias
 # ... add more paper types here as needed ...
 
 
-def construct_paper_figsize(paper=None, aspect=None, subtype=None):
+def construct_paper_figsize(paper, subtype=None, aspect=None):
     """Construct a figure size (width, height) in inches based on the paper type, aspect ratio, and column type."""
     if paper not in CUSTOM_PAPER_SETTINGS:
         raise ValueError('Invalid paper type: {}'.format(paper))
     if aspect is None:
-        aspect = 'auto'
+        aspect = 'equal'
     if subtype is None:
         subtype = CUSTOM_PAPER_SETTINGS[paper]['default_subtype']
+
+    if isinstance(subtype, int):
+        if 0 <= subtype < len(CUSTOM_PAPER_SETTINGS[paper]['subtypes']):
+            subtype = CUSTOM_PAPER_SETTINGS[paper]['subtypes'][subtype]
+        else:
+            raise ValueError('Invalid subtype index: {} (max: {})'.format(subtype, len(CUSTOM_PAPER_SETTINGS[paper]['subtypes']) - 1))
+        
+    elif not isinstance(subtype, str) and subtype in CUSTOM_PAPER_SETTINGS:
+        raise ValueError('Invalid subtype: {}'.format(subtype))
 
     size = CUSTOM_PAPER_SETTINGS[paper].get(subtype + '_size', None)
     if size is None:
@@ -59,19 +67,21 @@ def construct_paper_figsize(paper=None, aspect=None, subtype=None):
     
     return (width, height)
 
-def set_paper_defaults(settings={}, paper=None, aspect=None, subtype=None):
-    """Set the default figure size and font size based on the paper type, aspect, and column type."""
-    # settings are rc params only
-    if paper not in CUSTOM_PAPER_SETTINGS and paper is not None:
-        raise ValueError('Invalid paper type: {}'.format(paper))
+def set_style_defaults(settings={}, style=None, substyle=None, fig_aspect=None):
+    """Set the default figure size and font size."""
+    # settings are rc params only currently
+    if style not in CUSTOM_PAPER_SETTINGS and style is not None:
+        raise ValueError('Invalid paper type: {}'.format(style))
     
-    if paper is None:
+    if style is None:
         # set to default mpl settings
         figsize = MATPLOTLIB_DEFAULT_FIGSIZE
         fontsize = 10
+    elif style in CUSTOM_PAPER_SETTINGS:
+        figsize = construct_paper_figsize(style, subtype=substyle, aspect=fig_aspect)
+        fontsize = CUSTOM_PAPER_SETTINGS[style]['font_size']
     else:
-        figsize = construct_paper_figsize(paper=paper, aspect=aspect, subtype=subtype)
-        fontsize = CUSTOM_PAPER_SETTINGS[paper]['font_size']
+        raise ValueError('Invalid jv style: {}'.format(style))
 
     settings['figure.figsize'] = figsize
     settings['font.size'] = fontsize
@@ -121,9 +131,9 @@ matplotlib.rcParams["legend.borderpad"] = 0.8   # default is normally 0.4
 # any of the below can be passed as settings to functions with basic figure wrapper
 DEFAULT_CUSTOM_SUBPLOT_SETTINGS = {
     # meta settings (settings that override other settings)
-    'fig_paper': 'ApJ',                          # if set, will override figsize and fontsize settings with that paper defaults
-    'fig_aspect': 'auto',                        # if set, will override figure aspect ratio (width/height) with this value using paper default width 
-    'fig_subtype': None,                         # if set, will override figure subtype (singlecol/doublecol) with this value using paper default width
+    'fig_style': 'ApJ',                          # if set, will override figsize and fontsize settings with that style (e.g., paper defaults)
+    'fig_substyle': None,                        # if set, will override figure substyle (singlecol/doublecol) with this value using paper default width
+    'fig_aspect': None,                          # if set, will override figure aspect ratio (width/height) with this value using paper default width 
 
     'no_ticks': False,                           # if true, will set all tick sizes to 0 (overrides any other tick size settings)
     'no_minor_ticks': False,                     # if true, will set all minor tick sizes to 0 (overrides any other minor tick size settings)
@@ -132,14 +142,22 @@ DEFAULT_CUSTOM_SUBPLOT_SETTINGS = {
     'force_regular_log_major_ticks': False,      # if true, will force regular log major ticks on x and y axes (i.e. 1, 10, 100, etc. not 1, 100, etc.)
     'default_ticks_on_colorbar': True,           # if true, will force default ticks on colorbar
     
+    'loglog': None,                              # if set, will set x and y axes to log or linear scale 
     'xlog': None,
     'ylog': None,
     'xminor_nsubs': None,         # if set, will use AutoMinorLocator with this number of subdivisions for the x-axis minor ticks (overrides any other x-axis minor tick locator settings)
     'yminor_nsubs': None,
+    'xmin': None,                 # if set, will set the x-axis lower limit (overrides any other xlim settings)
+    'xmax': None,                 # if set, will set the x-axis upper limit (overrides any other xlim settings)
+    'ymin': None,                 # if set, will set the y-axis lower limit (overrides any other ylim settings)
+    'ymax': None,                 # if set, will set the y-axis upper limit (overrides any other ylim settings)
 
     # add optional components
     'show_legend': False,
     'show_colorbar': False,
+
+    # legend settings
+    'show_legend_on_ax_num': 0,   # if set, will show legend on the axes with this index (0-indexed) in the figure, if -1 it will only show if the plot is done, if True it will show on every axes, if False it will not show on any axes (unless overridden by show_legend)
     
     # tick subdivision settings
     'xminor_locator': None,     # if set, will use this locator for the x-axis minor ticks
@@ -180,25 +198,16 @@ DEFAULT_SET_SETTINGS = {
 # any matplotlib rcParams keys can also be used as settings under the following transformation
 format_setting_to_rc_params = lambda k: k.replace('_', '.')
 format_rcparams_to_settings = lambda k: k.replace('.', '_')
+EXCLUDED_SET_SETTINGS = {'label', 'zorder', 'alpha'} # excluded label so that it can be used in the plotting function instead
 EXCLUDED_RC_PARAMS = {'path.effects'} # excluded due to e.g. overlap with other settings
 ALLRCPARAMKEYS = set(k for k in plt.rcParams.keys() if k not in EXCLUDED_RC_PARAMS)
 ALLRCPARAMKEYS_REFORMATTED = set(format_rcparams_to_settings(k) for k in ALLRCPARAMKEYS)
-ALL_SET_SETTINGS = set(plt.gca().properties().keys()); plt.close()
+ALL_SET_SETTINGS = set([k for k in plt.gca().properties().keys() if k not in EXCLUDED_SET_SETTINGS]); plt.close()
 ALL_POSSIBLE_SETTINGS = set(DEFAULT_CUSTOM_SUBPLOT_SETTINGS.keys()).union(ALL_SET_SETTINGS).union(ALLRCPARAMKEYS_REFORMATTED)
 assert len(ALL_POSSIBLE_SETTINGS) == len(DEFAULT_CUSTOM_SUBPLOT_SETTINGS) + len(ALL_SET_SETTINGS) + len(ALLRCPARAMKEYS_REFORMATTED), 'There is overlap in the possible settings, please check ALL_POSSIBLE_SETTINGS.'
 
 
-def use_paper(paper, subtype=None, aspect=None):
-    """Switch the default figure size used for all future jv plots."""
-    if paper not in CUSTOM_PAPER_SETTINGS and paper is not None:
-        raise ValueError('Invalid paper type: {}'.format(paper))
-    global DEFAULT_CUSTOM_SUBPLOT_SETTINGS
-    DEFAULT_CUSTOM_SUBPLOT_SETTINGS['fig_paper'] = paper
-    if aspect is not None:
-        DEFAULT_CUSTOM_SUBPLOT_SETTINGS['fig_aspect'] = aspect
-    if subtype is not None:
-        DEFAULT_CUSTOM_SUBPLOT_SETTINGS['fig_subtype'] = subtype
-
+# style context managers
 def set_defaults(**kwargs):
     """Set the default settings used for all future jv plots."""
     global DEFAULT_CUSTOM_SUBPLOT_SETTINGS, DEFAULT_SET_SETTINGS
@@ -213,14 +222,36 @@ def set_defaults(**kwargs):
         else:
             raise ValueError('Invalid setting: {}'.format(k))
 
+def set_style(style, substyle=None, fig_aspect=None):
+    """Switch the default figure size used for all future jv plots."""
+    if style not in CUSTOM_PAPER_SETTINGS and style is not None:
+        raise ValueError('Invalid paper type: {}'.format(style))
+    set_defaults(fig_style=style, fig_substyle=substyle, fig_aspect=fig_aspect)
+use_paper=set_style # deprecated alias
 
+class style_context: # TODO: expand this to other settings also and make it more general?
+    def __init__(self, style=None, substyle=None, fig_aspect=None):
+        self.org_style = (
+            DEFAULT_CUSTOM_SUBPLOT_SETTINGS['fig_style'], 
+            DEFAULT_CUSTOM_SUBPLOT_SETTINGS['fig_substyle'], 
+            DEFAULT_CUSTOM_SUBPLOT_SETTINGS['fig_aspect']
+        )
+        self.new_style = (style, substyle, fig_aspect)
 
+    def __enter__(self):
+        set_style(*self.new_style)
+        return self
 
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        set_style(*self.org_style)
+
+# standard functionality decorator
 
 def iterate_height_to_get_fixed_width(fig, max_iter=100, fig_aspect=1.0, fallback_aspect=1.0, _debug=False):
     """Iteratively adjust the figure height to achieve a fixed width with tight bbox, but variable height/figure aspect ratio."""
     dpi = matplotlib.rcParams['savefig.dpi']
     fig.set_dpi(dpi) # make sure dpi is right
+    org_height_inches = float(fig.get_figheight())        # original height in inches (before bbox cut)
     goal_width_inches = float(fig.get_figwidth())         # approximate width in inches (within pixel round-off error)
     goal_width_pixels = int(round(goal_width_inches*dpi)) # target exact width in pixels
 
@@ -245,9 +276,9 @@ def iterate_height_to_get_fixed_width(fig, max_iter=100, fig_aspect=1.0, fallbac
         ## check if the adjustment is too large
         check_ratio = full_width_inches/goal_width_inches
         if check_ratio > 100 or check_ratio < 0.01:
-            warnings.warn('[PLOT ERROR] Large discrepancy in figure width ({} pixels vs {} pixels), stopping adjustment and defaulting to original size.'.format(goal_width_pixels, real_width_pixels)) # this can sometimes to occur if the figure height is not large enough, check that first
-            aspect = 1.0 if fig_aspect == 'equal' else fig_aspect if fig_aspect != 'auto' else fallback_aspect # default to aspect ratio of 1 if none defined
-            fig.set_size_inches((goal_width_inches, goal_width_inches/aspect)) # reset to original size
+            warnings.warn('[PLOT ERROR] Large discrepancy in figure width ({} pixels vs {} pixels), stopping adjustment and defaulting to original size{}.'.format(goal_width_pixels, real_width_pixels, " (with attempted adjustment to figure aspect)" if fig_aspect != 'auto' else "")) # this can sometimes to occur if the figure height is not large enough, check that first
+            aspect = 1.0 if fig_aspect == 'equal' else fig_aspect  # default to aspect ratio of 1 if none defined
+            fig.set_size_inches((goal_width_inches, goal_width_inches/aspect if fig_aspect != 'auto' else org_height_inches)) # reset to original size
             fig.canvas.draw()
             break
 
@@ -265,7 +296,6 @@ def basic_figure_wrapper(**wrapper_settings):
 
     def decorator_real(plotting_function): # intermediate decorator to allow for custom settings to be passed in
         @functools.wraps(plotting_function)
-        
         def wrapper_function(*args, ax=None, **kwargs):
             # update kwargs with defaults
             for wkwarg in wrapper_settings:
@@ -278,7 +308,7 @@ def basic_figure_wrapper(**wrapper_settings):
             # extract the kwargs going to the plotting function and other settings
             custom_settings = {k: v for k, v in kwargs.items() if k in DEFAULT_CUSTOM_SUBPLOT_SETTINGS}
             rc_params = {format_setting_to_rc_params(k): v for k, v in kwargs.items() if k not in custom_settings and k in ALLRCPARAMKEYS_REFORMATTED}
-            set_settings = {k: v for k, v in kwargs.items() if k in DEFAULT_SET_SETTINGS and k not in custom_settings and k not in ALLRCPARAMKEYS_REFORMATTED}
+            set_settings = {k: v for k, v in kwargs.items() if k in ALL_SET_SETTINGS and k not in custom_settings and k not in ALLRCPARAMKEYS_REFORMATTED}
             function_kwargs = {k: v for k, v in kwargs.items() if k not in set_settings and k not in custom_settings and k not in ALLRCPARAMKEYS_REFORMATTED}
 
             # DEBUG
@@ -293,15 +323,15 @@ def basic_figure_wrapper(**wrapper_settings):
             # print()
 
             # update kwargs with any overriding "meta" settings
-            if custom_settings['fig_paper'] is not None:
-                rc_params = set_paper_defaults(
+            if custom_settings['fig_style'] is not None:
+                rc_params = set_style_defaults(
                     settings=rc_params,
-                    paper=custom_settings['fig_paper'], 
-                    aspect=custom_settings['fig_aspect'], 
-                    subtype=custom_settings['fig_subtype'],
+                    style=custom_settings['fig_style'],  
+                    substyle=custom_settings['fig_substyle'],
+                    fig_aspect=custom_settings['fig_aspect'],
                 )
             else: # if "default" scheme
-                custom_settings['fixed_width'] = False # no fixed width bbox adjustment
+                custom_settings['fixed_width'] = False # no fixed width bbox adjustment if matplotlib default
             if kwargs.get('no_ticks', False):
                 rc_params['xtick.major.size'] = 0
                 rc_params['ytick.major.size'] = 0
@@ -326,12 +356,24 @@ def basic_figure_wrapper(**wrapper_settings):
                 custom_settings['colorbar_rcparams']['xtick.minor.size'] = matplotlib.rcParams['xtick.minor.size']
                 custom_settings['colorbar_rcparams']['ytick.minor.size'] = matplotlib.rcParams['ytick.minor.size']
                 custom_settings.pop("default_ticks_on_colorbar", None)
+            if kwargs.get('loglog', None) is not None:
+                set_settings['xscale'] = 'log' if kwargs['loglog'] else 'linear'
+                set_settings['yscale'] = 'log' if kwargs['loglog'] else 'linear'
+                custom_settings.pop("loglog", None)
             if kwargs.get('xlog', None) is not None:
                 set_settings['xscale'] = 'log' if kwargs['xlog'] else 'linear'
                 custom_settings.pop("xlog", None)
             if kwargs.get('ylog', None) is not None:
                 set_settings['yscale'] = 'log' if kwargs['ylog'] else 'linear'
                 custom_settings.pop("ylog", None)
+            if kwargs.get('xmin', None) is not None:
+                set_settings['xlim'] = (kwargs['xmin'], set_settings.get('xlim', (None, None))[1])
+            if kwargs.get('xmax', None) is not None:
+                set_settings['xlim'] = (set_settings.get('xlim', (None, None))[0], kwargs['xmax'])
+            if kwargs.get('ymin', None) is not None:
+                set_settings['ylim'] = (kwargs['ymin'], set_settings.get('ylim', (None, None))[1])
+            if kwargs.get('ymax', None) is not None:
+                set_settings['ylim'] = (set_settings.get('ylim', (None, None))[0], kwargs['ymax'])
             # ... add more meta settings here as needed ...
 
             # DEBUG
@@ -362,12 +404,28 @@ def basic_figure_wrapper(**wrapper_settings):
 
                 ## axes settings
                 ax.set(**set_settings)
-                
-                ## custom settings
-                if custom_settings['show_legend']:
-                    ax.legend()
 
-                if custom_settings['show_colorbar']:
+                ## custom settings ##
+                is_done = custom_settings['out'] is not None or custom_settings['show']
+
+                # legend settings
+                show_legend = custom_settings['show_legend']
+                if type(custom_settings['show_legend_on_ax_num']) is bool:
+                    show_legend = custom_settings['show_legend_on_ax_num']
+                elif type(custom_settings['show_legend_on_ax_num']) is int:
+                    ax_num = fig.axes.index(ax)
+                    if custom_settings['show_legend_on_ax_num'] == ax_num:
+                        show_legend = True
+                    if custom_settings['show_legend_on_ax_num'] == -1 and is_done:
+                        show_legend = True
+
+                if show_legend: 
+                    handles, labels = ax.get_legend_handles_labels()
+                    if handles and labels:
+                        ax.legend()
+
+                # colorbar settings
+                if custom_settings['show_colorbar'] and bool(ax.images or ax.collections or ax.contours):
                     with matplotlib.rc_context(custom_settings['colorbar_rcparams']):
                         if custom_settings['colorbar_on_fig']:
                             axes = fig.get_axes()
@@ -427,14 +485,12 @@ def basic_figure_wrapper(**wrapper_settings):
                     ax.yaxis.set_minor_locator(custom_settings['yminor_locator'])
 
                 # closing settings
-                is_done = custom_settings['out'] is not None or custom_settings['show']
-
                 if custom_settings['out'] is not None:
                     if custom_settings['fixed_width']:  # custom iteration to fix the resulting width of saved figure and have tight bbox
                         #import time #DEBUG
                         #t= time.time() #DEBUG
                         #print('new output: {}'.format(custom_settings['out'])) # DEBUG
-                        iterate_height_to_get_fixed_width(fig, max_iter=custom_settings['fixed_width_max_iter'], fig_aspect=custom_settings['fig_aspect'], fallback_aspect=1.0)
+                        iterate_height_to_get_fixed_width(fig, max_iter=custom_settings['fixed_width_max_iter'], fig_aspect=custom_settings['fig_aspect'])
                         #print('iteration time:', time.time()-t) #DEBUG
 
                         ##save image
@@ -463,39 +519,65 @@ def basic_figure_wrapper(**wrapper_settings):
     return decorator_real
 
 
-@basic_figure_wrapper(show_legend=True, fig_aspect='equal')
-def plot(x, y, ax=None, label=None, color=None, ls='-', lw=None, **kwargs):
-    """General 1D plotting function for lines. Use a tuples of parameters to plot multiple lines."""
-    if not isinstance(y, tuple):  # for now base it on y, but could also be based on x or other parameters, just need to make sure they are all the same length TODO
-        y = (y,)
-    if not isinstance(x, tuple):
-        x = (x,) * len(y)
-    if not isinstance(label, tuple):
-        label = (label,) * len(y)
-    if not isinstance(color, tuple):
-        color = (color,) * len(y)
-    if not isinstance(ls, tuple):
-        ls = (ls,) * len(y)
-    if not isinstance(lw, tuple):
-        lw = (lw,) * len(y)
-    rets = []
-    for i in range(len(y)):
-        rets.append(ax.plot(x[i], y[i], label=label[i], color=color[i], ls=ls[i], lw=lw[i], **kwargs))
-    if len(y) == 1:
-        return rets[0]
-    return rets
 
-@basic_figure_wrapper(fig_aspect='equal')
+def general_1d_wrapper(plotting_function_name, _possible_changing_kwargs={'y2','label','color','ls','lw','zorder','alpha'}, **wrapper_settings):
+    """Wrapper for 1D plotting functions that takes care of the figure and axes creation."""
+    @basic_figure_wrapper(**wrapper_settings)
+    def wrapper_function(*args, ax=None, **kwargs):
+        n_lines = max(
+            max(len(x) if isinstance(x, tuple) else 1 for x in args),
+            max(len(kwargs[k]) if k in kwargs and isinstance(kwargs[k], tuple) else 1 for k in _possible_changing_kwargs)
+        )
+        new_args = []
+        for i in range(len(args)):
+            if not isinstance(args[i], tuple):
+                new_args.append((args[i],) * n_lines)
+            else:
+                new_args.append(args[i])
+        for k in _possible_changing_kwargs:
+            if k in kwargs and not isinstance(kwargs[k], tuple):
+                kwargs[k] = (kwargs[k],) * n_lines
+        rets = []
+        for i in range(n_lines):
+            local_args = [new_args[j][i] for j in range(len(new_args))]
+            local_kwargs = {k: kwargs[k][i] if k in _possible_changing_kwargs else kwargs[k] for k in kwargs}
+            rets.append(getattr(ax, plotting_function_name)(*local_args, **local_kwargs))
+        if n_lines == 1:
+            return rets[0]
+        return rets
+    return wrapper_function
+
+
+
+# general plotting functions 
+plot = general_1d_wrapper('plot')
+fill_between = general_1d_wrapper('fill_between')
+
+def loglog(*args, **kwargs):
+    """General 1D plotting function for lines on log-log axes."""
+    # Note that if you override this setting at a later point before ending the figure, it will override this.
+    kwargs['loglog'] = True
+    return plot(*args, **kwargs)
+
+@basic_figure_wrapper()
 def scatter(x, y, ax=None, **kwargs): 
-    """General 2D plotting function for images."""
+    """General scatter plot function."""
     return ax.scatter(x, y, **kwargs)
 
-@basic_figure_wrapper(show_colorbar=True, fig_aspect='equal', no_minor_ticks=True)
+@basic_figure_wrapper()
+def hist(x, ax=None, **kwargs): 
+    """General histogram plot function."""
+    return ax.hist(x, **kwargs)
+
+@basic_figure_wrapper(show_colorbar=True, no_minor_ticks=True)
 def imshow(X, ax=None, colorbar=True, **kwargs): 
     """General 2D plotting function for images."""
     return ax.imshow(X, **kwargs)
 
-
+@basic_figure_wrapper()
+def blank_plot(**kwargs):
+    pass
+close=blank_plot # alias for ending a plot without plotting anything else in that line
 
 
 

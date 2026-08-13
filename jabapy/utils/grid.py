@@ -1,5 +1,17 @@
+import math, warnings
+
 import numpy as np
 import numba
+
+from contextlib import contextmanager
+@contextmanager
+def numba_threads(n_threads):
+    old_threads = numba.get_num_threads()
+    try:
+        numba.set_num_threads(n_threads)
+        yield
+    finally:
+        numba.set_num_threads(old_threads)
 
 
 def quick_image_downsize(image, factor=2):
@@ -33,212 +45,852 @@ def _cubic_kernel(q):
         return 0.0
 
 
-
 ##########################################
 ######## Interpolation onto grids ########
 ##########################################
 
-#### Basic diagonistic direct binning method ####
-@numba.njit(parallel=True, fastmath=True)
-def _bin_particles_direct(pos, qty, mins, maxs, dims):
-    N, D = pos.shape
+### Direct binning method for any geometry of grid ###
+@numba.njit(parallel=False, cache=True)
+def _bin_particles_direct_serial(pos, qty, mins, maxs, dims, strides, grid):
+    """
+    Helper function. Requires precomputed strides and zero-copy grid (which it updates in place).
+    Serial version. Much faster than np.histogram.
+    """ 
+    N = pos.shape[0]
     d = dims.shape[0]
-
-    # cell sizes
-    dx = (maxs - mins) / dims
-
-    # strides for flattening
-    strides = np.empty(d, dtype=np.int64)
-    strides[0] = 1
-    for i in range(1, d):
-        strides[i] = strides[i-1] * dims[i-1]
-
-    total_size = strides[d-1] * dims[d-1]
-    grid = np.zeros(total_size)
-
-    for n in numba.prange(N):
+    M = qty.shape[1]
+    inv_dx = dims/(maxs - mins)
+    for n in range(N):
         linear_index = 0
         valid = True
-
         for k in range(d):
-            coord = pos[n, k]
-            idx = int((coord - mins[k]) / dx[k])
-
+            idx = int((pos[n, k] - mins[k]) * inv_dx[k])
             if idx < 0 or idx >= dims[k]:
                 valid = False
                 break
-
             linear_index += idx * strides[k]
-
         if valid:
-            grid[linear_index] += qty[n]
+            for m in range(M):
+                grid[m, linear_index] += qty[n, m]
 
-    return grid
+@numba.njit(parallel=True, cache=True)
+def _bin_particles_direct_parallel(pos, qty, mins, maxs, dims, strides, grid, nthreads):
+    """
+    Helper function. Requires precomputed strides and zero-copy grid (which it updates in place).
+    Parallel version, parallelizing across x-axis and M qty axis. 
+    Tends to be only occasionally faster than serial version. Requires nthreads < M.
+    """
+    N = pos.shape[0]
+    d = dims.shape[0]
+    M = qty.shape[1]
+    inv_dx = dims/(maxs - mins)
 
-def bin_particles_direct(pos, qty, mins=None, maxs=None, dims=None):
+    for thread_idx in numba.prange(nthreads):
+        # determine which x-bin and m-bin this thread is responsible for
+        m = thread_idx % M
+        x_idx = thread_idx // M
+        total_xbins = (nthreads - m + M - 1) // M
+        bin0_start = (dims[0] * x_idx) // total_xbins
+        bin0_end = (dims[0] * (x_idx + 1)) // total_xbins
+
+        # for all particles
+        for n in range(N):
+            # skip if not in this thread's x-bin range
+            idx0 = int((pos[n, 0] - mins[0]) * inv_dx[0])
+            if idx0 < bin0_start or idx0 >= bin0_end:
+                continue
+            
+            # skip if out of bounds in any other dimension
+            linear_index = idx0 * strides[0]
+            valid = True
+            for k in range(1, d):
+                idx = int((pos[n, k] - mins[k]) * inv_dx[k])
+                if idx < 0 or idx >= dims[k]:
+                    valid = False
+                    break
+                linear_index += idx * strides[k]
+            
+            # if valid, add to the grid at this linear bin index
+            if valid:
+                grid[m, linear_index] += qty[n, m]
+
+
+def bin_particles_direct(pos, *qty, mins=None, maxs=None, dims=None, ret_bins=False, nthreads=None, _npart_multithread_threshold=1e6):
     """
     General N-dimensional direct binning algorithm.
     An extremely quick O(N) way to interpolate particles onto a Cartesian grid.
-    Suitable in the limit of small smoothing length / high density relative to grid size,
-    but otherwise will be noisy and not very accurate. 
-
+    Suitable in the limit of small smoothing length / high density relative to grid size, but
+    otherwise will be noisy and not very accurate in 2d or 3d. Usually good enough for small enough 1d histograms though.
+    
     Parameters
     ----------
-    pos  : (N, D) array of particle positions
-    qty  : (N,) quantity
-    mins : (d,) lower bounds (DEFAULT: mins of each dimension)
-    maxs : (d,) upper bounds (DEFAULT: maxes of each dimension)
-    dims : (d,) number of bins per dimension (DEFAULT: 512x512 image)
+    pos      : (N, D)   array of particle positions
+    qty      : (N, *M)  quantity (*optionally M quantities)
+    mins     : (d,)     lower bounds (DEFAULT: mins of each dimension)
+    maxs     : (d,)     upper bounds (DEFAULT: maxes of each dimension)
+    dims     : (d,)     number of bins per dimension (DEFAULT: 512x512 image)
+    nthreads : int      number of threads to use (DEFAULT: all available threads)
+    ret_bins : bool     also return the bin edges if True (DEFAULT: False)
+    
+    If D > d, the extra dimensions of pos are ignored. If D < d, an error is raised.
     """
-    pos = np.asarray(pos)
-    qty = np.asarray(qty)
+    # handle inputs
+    pos = np.ascontiguousarray(pos)
+    assert len(pos.shape) == 2, 'Invalid pos format.'
+
+    if isinstance(qty, tuple): # if qty is a tuple of arrays, stack them together
+        qty = qty[0] if len(qty) == 1 else np.column_stack(qty)
+    qty = np.ascontiguousarray(qty)
+    assert len(qty.shape) == 1 or len(qty.shape) == 2, 'Invalid qty format.'
+    assert pos.shape[0] == qty.shape[0], 'Not matching number of particles in pos and qty.'
+
+    dims = np.array([512, 512], dtype=np.int64, order='C') if dims is None else np.ascontiguousarray(dims, dtype=np.int64) # default to 512x512 image
+    assert len(dims.shape) == 1, 'Invalid dims format.'
+    assert dims.shape[0] <= pos.shape[1], 'Grid dimensions (d) cannot exceed number of particle position dimensions (D).'
+
+    # calculate internal variables
+    d = dims.shape[0]
+    M = 1 if len(qty.shape) == 1 else qty.shape[1] # number of quantities to bin
+    _pos = pos[:, :d] if pos.shape[1] > d else pos # if D > d, truncate pos to the number of dimensions of the grid
+    _qty = qty.reshape(-1, 1) if M == 1 else qty
+
+    # handle other inputs
+    mins = np.min(_pos, axis=0) if mins is None else np.ascontiguousarray(mins) # default to the min of the positions
+    assert len(mins.shape) == 1, 'Invalid mins format.'
+    assert mins.shape[0] == dims.shape[0], 'Non-matching mins and dims shape.'
+
+    maxs = np.max(_pos, axis=0) if maxs is None else np.ascontiguousarray(maxs) # default to the max of the positions
+    assert len(maxs.shape) == 1, 'Invalid maxs format.'
+    assert maxs.shape[0] == dims.shape[0], 'Non-matching maxs and dims shape.'
+    
+    if nthreads is None:
+        if pos.shape[0] > _npart_multithread_threshold: # if there are a lot of particles, use parallel version
+            nthreads = -1
+        else:
+            nthreads = 1
+    if nthreads == -1:
+        nthreads = numba.get_num_threads()
+    if nthreads != 1 and nthreads < M:
+        warnings.warn(f"Number of threads ({nthreads}) is less than the number of quantities ({M}). Switching to serial version since this is not currently supported.")
+        nthreads = 1
+
+    # calculate strides for flattening
+    strides = np.empty(d, dtype=np.int64, order='C')
+    strides[d-1] = 1
+    for i in range(d-2, -1, -1):
+        strides[i] = strides[i+1] * dims[i+1]
+    total_size = strides[0] * dims[0]
+
+    # calculate the grid
+    grid = np.zeros((M, total_size), dtype=np.float64, order='C')
+    if nthreads == 1:
+        _bin_particles_direct_serial(_pos, _qty, mins, maxs, dims, strides, grid)
+    else:
+        with numba_threads(nthreads):
+            _bin_particles_direct_parallel(_pos, _qty, mins, maxs, dims, strides, grid, nthreads)
+    grid = grid.reshape(tuple(dims)) if M == 1 else grid.reshape((M,) + tuple(dims))
+
+    if not ret_bins:
+        return grid
+    
+    # also return with position bins edges if requested
+    bins = [np.arange(d + 1) * ((mx - mn) / d) + mn for mn, mx, d in zip(mins, maxs, dims)]
+    return bins, grid
+
+
+
+### Instead of sum above, get min/max ###
+@numba.njit(parallel=False, cache=True)
+def _bin_particles_maxmin_serial(pos, qty, mins, maxs, dims, strides, max_grid, min_grid):
+    """
+    Helper function. Requires precomputed strides and zero-copy grid (which it updates in place).
+    Serial version.
+    # TODO: make parallel version 
+    # TODO: generalize this together with sum (above) and median, q1, q3, etc.
+    """ 
+    N = pos.shape[0]
+    d = dims.shape[0]
+    M = qty.shape[1]
+    inv_dx = dims/(maxs - mins)
+    for n in range(N):
+        linear_index = 0
+        valid = True
+        for k in range(d):
+            idx = int((pos[n, k] - mins[k]) * inv_dx[k])
+            if idx < 0 or idx >= dims[k]:
+                valid = False
+                break
+            linear_index += idx * strides[k]
+        if valid:
+            for m in range(M):
+                max_grid[m, linear_index] = max(max_grid[m, linear_index], qty[n, m])
+                min_grid[m, linear_index] = min(min_grid[m, linear_index], qty[n, m])
+
+def bin_particles_maxmin(pos, *qty, mins=None, maxs=None, dims=None, ret_bins=False, nthreads=None, _npart_multithread_threshold=np.inf):
+    """
+    General N-dimensional direct binning algorithm, returning max/min. Copied mostly from bin_particles_direct above.
+    """
+    # handle inputs
+    pos = np.ascontiguousarray(pos)
+    assert len(pos.shape) == 2, 'Invalid pos format.'
+
+    if isinstance(qty, tuple): # if qty is a tuple of arrays, stack them together
+        qty = qty[0] if len(qty) == 1 else np.column_stack(qty)
+    qty = np.ascontiguousarray(qty)
+    assert len(qty.shape) == 1 or len(qty.shape) == 2, 'Invalid qty format.'
+    assert pos.shape[0] == qty.shape[0], 'Not matching number of particles in pos and qty.'
+
+    dims = np.array([512, 512], dtype=np.int64, order='C') if dims is None else np.ascontiguousarray(dims, dtype=np.int64) # default to 512x512 image
+    assert len(dims.shape) == 1, 'Invalid dims format.'
+    assert dims.shape[0] <= pos.shape[1], 'Grid dimensions (d) cannot exceed number of particle position dimensions (D).'
+
+    # calculate internal variables
+    d = dims.shape[0]
+    M = 1 if len(qty.shape) == 1 else qty.shape[1] # number of quantities to bin
+    _pos = pos[:, :d] if pos.shape[1] > d else pos # if D > d, truncate pos to the number of dimensions of the grid
+    _qty = qty.reshape(-1, 1) if M == 1 else qty
+
+    # handle other inputs
+    mins = np.min(_pos, axis=0) if mins is None else np.ascontiguousarray(mins) # default to the min of the positions
+    assert len(mins.shape) == 1, 'Invalid mins format.'
+    assert mins.shape[0] == dims.shape[0], 'Non-matching mins and dims shape.'
+
+    maxs = np.max(_pos, axis=0) if maxs is None else np.ascontiguousarray(maxs) # default to the max of the positions
+    assert len(maxs.shape) == 1, 'Invalid maxs format.'
+    assert maxs.shape[0] == dims.shape[0], 'Non-matching maxs and dims shape.'
+    
+    if nthreads is None:
+        if pos.shape[0] > _npart_multithread_threshold: # if there are a lot of particles, use parallel version
+            nthreads = -1
+        else:
+            nthreads = 1
+    if nthreads == -1:
+        nthreads = numba.get_num_threads()
+    if nthreads != 1 and nthreads < M:
+        warnings.warn(f"Number of threads ({nthreads}) is less than the number of quantities ({M}). Switching to serial version since this is not currently supported.")
+        nthreads = 1
+
+    # calculate strides for flattening
+    strides = np.empty(d, dtype=np.int64, order='C')
+    strides[d-1] = 1
+    for i in range(d-2, -1, -1):
+        strides[i] = strides[i+1] * dims[i+1]
+    total_size = strides[0] * dims[0]
+
+    # calculate the grid
+    max_grid = np.zeros((M, total_size), dtype=np.float64, order='C')
+    min_grid = np.zeros((M, total_size), dtype=np.float64, order='C')
+    if nthreads == 1:
+        _bin_particles_maxmin_serial(_pos, _qty, mins, maxs, dims, strides, max_grid, min_grid)
+    else:
+        with numba_threads(nthreads):
+            raise NotImplementedError("Parallel version of bin_particles_maxmin not yet implemented.")
+            #_bin_particles_maxmin_parallel(_pos, _qty, mins, maxs, dims, strides, min_grid, max_grid, nthreads)
+    max_grid = max_grid.reshape(tuple(dims)) if M == 1 else max_grid.reshape((M,) + tuple(dims))
+    min_grid = min_grid.reshape(tuple(dims)) if M == 1 else min_grid.reshape((M,) + tuple(dims))
+
+    if not ret_bins:
+        return max_grid, min_grid
+
+    # also return with position bins edges if requested
+    bins = [np.arange(d + 1) * ((mx - mn) / d) + mn for mn, mx, d in zip(mins, maxs, dims)]
+    return bins, max_grid, min_grid
+
+
+def bin_particles_percentiles(pos, qty, weight=None, mins=None, maxs=None, dims=None, ret_bins=False, p_volume=75.0):
+    """
+    Compute per-bin percentiles (q1, median, q3) using a numba-accelerated
+    quickselect-like approach. This function mirrors the API/shape of the
+    other binning helpers and returns either (q1, median, q3) or
+    (bins, q1, median, q3) when `ret_bins=True`.
+
+    Implementation notes:
+      - First pass computes per-bin counts to allocate a flat storage array.
+      - Second pass fills the flat array with per-bin values.
+      - Then per-bin selection is done with an in-place nth-element (quickselect)
+        implemented in numba for speed.
+    """
+    pos = np.ascontiguousarray(pos, dtype=np.float64)
+    qty = np.ascontiguousarray(qty, dtype=np.float64)
+    if weight is None:
+        weight = np.ones(qty.shape[0], dtype=np.float64)
+    else:
+        weight = np.ascontiguousarray(weight, dtype=np.float64)
+
+    if np.any(weight < 0):
+        raise ValueError("Weights must be non-negative.")
+
     if dims is None:
         dims = np.array([512, 512], dtype=np.int64)
     else:
         dims = np.asarray(dims, dtype=np.int64)
     d = dims.shape[0]
+
     if mins is None:
         mins = np.min(pos[:, :d], axis=0)
     else:
-        mins = np.asarray(mins)
+        mins = np.asarray(mins, dtype=np.float64)
     if maxs is None:
         maxs = np.max(pos[:, :d], axis=0)
     else:
-        maxs = np.asarray(maxs)
+        maxs = np.asarray(maxs, dtype=np.float64)
 
+    # compute strides and total size
+    strides = np.empty(d, dtype=np.int64)
+    strides[d-1] = 1
+    for i in range(d-2, -1, -1):
+        strides[i] = strides[i+1] * dims[i+1]
+    total_size = int(strides[0] * dims[0])
+
+    # call into numba core
+    q1_flat, median_flat, q3_flat = _percentiles_core(pos, qty, weight, mins, maxs, dims, strides, p_volume)
+
+    q1 = q1_flat.reshape(tuple(dims))
+    median = median_flat.reshape(tuple(dims))
+    q3 = q3_flat.reshape(tuple(dims))
+
+    if not ret_bins:
+        return q1, median, q3
+
+    bins = [np.arange(int(d) + 1) * ((mx - mn) / int(d)) + mn for mn, mx, d in zip(mins, maxs, dims)]
+    return bins, q1, median, q3
+
+
+@numba.njit
+def _nth_element(a, w, left, right, n):
+    """In-place quickselect (nth_element) that returns the n-th smallest element index relative to `a`."""
+    while True:
+        if left == right:
+            return a[left]
+        pivot = a[(left + right) // 2]
+        i = left
+        j = right
+        while i <= j:
+            while a[i] < pivot:
+                i += 1
+            while a[j] > pivot:
+                j -= 1
+            if i <= j:
+                tmp = a[i]
+                a[i] = a[j]
+                a[j] = tmp
+                tmp = w[i]
+                w[i] = w[j]
+                w[j] = tmp
+                i += 1
+                j -= 1
+    
+        left_weight = 0.0
+        for k in range(left, j + 1):
+            left_weight += w[k]
+
+        middle_weight = 0.0
+        for k in range(j + 1, i):
+            middle_weight += w[k]
+
+        if n <= left_weight:
+            right = j
+        elif n <= left_weight + middle_weight:
+            return pivot
+        else:
+            n -= left_weight + middle_weight
+            left = i
+    
+            
+
+
+@numba.njit(parallel=True)
+def _percentiles_core(pos, qty, weight, mins, maxs, dims, strides, p_volume):
+    N = pos.shape[0]
+    d = dims.shape[0]
+    inv_dx = dims.astype(np.float64) / (maxs - mins)
+
+    total_size = int(strides[0] * dims[0])
+    counts = np.zeros(total_size, dtype=np.int64)
+
+    # pass 1: counts
+    for n in range(N):
+        lin = 0
+        valid = True
+        for k in range(d):
+            idx = int((pos[n, k] - mins[k]) * inv_dx[k])
+            if idx < 0 or idx >= dims[k]:
+                valid = False
+                break
+            lin += idx * strides[k]
+        if valid:
+            counts[lin] += 1
+
+    # offsets
+    offsets = np.empty(total_size + 1, dtype=np.int64)
+    offsets[0] = 0
+    for i in range(total_size):
+        offsets[i+1] = offsets[i] + counts[i]
+    total_vals = offsets[total_size]
+
+    # pass 2: fill flat array
+    flat_vals = np.empty(total_vals, dtype=np.float64)
+    flat_weights = np.empty(total_vals, dtype=np.float64)
+    cur = np.zeros(total_size, dtype=np.int64)
+    for n in range(N):
+        lin = 0
+        valid = True
+        for k in range(d):
+            idx = int((pos[n, k] - mins[k]) * inv_dx[k])
+            if idx < 0 or idx >= dims[k]:
+                valid = False
+                break
+            lin += idx * strides[k]
+        if valid:
+            idx_flat = offsets[lin] + cur[lin]
+            flat_vals[idx_flat] = qty[n]
+            flat_weights[idx_flat] = weight[n]
+            cur[lin] += 1
+
+    # prepare outputs
+    q1 = np.empty(total_size, dtype=np.float64)
+    med = np.empty(total_size, dtype=np.float64)
+    q3 = np.empty(total_size, dtype=np.float64)
+
+    p = float(p_volume)
+    frac_low = (1.0 - p/100.0) / 2.0
+    frac_med = 0.5
+    frac_high = 1.0 - frac_low
+
+    # per-bin selection (parallel across bins)
+    for i in numba.prange(total_size):
+        m = counts[i]
+        if m == 0:
+            q1[i] = np.nan
+            med[i] = np.nan
+            q3[i] = np.nan
+            continue
+        start = offsets[i]
+        end = offsets[i+1] - 1
+
+        total_weight = 0.0
+        for k in range(start, end + 1):
+            total_weight += flat_weights[k]
+
+        target_low = frac_low * total_weight
+        target_med = frac_med * total_weight
+        target_high = frac_high * total_weight
+
+        q1[i] = _nth_element(flat_vals, flat_weights, start, end, target_low)
+        med[i] = _nth_element(flat_vals, flat_weights, start, end, target_med)
+        q3[i] = _nth_element(flat_vals, flat_weights, start, end, target_high)
+
+    return q1, med, q3
+
+
+
+
+#### Scatter-splat method for SPH with Cartesian grids ####
+# -> numba version of cython implementation in pynbody (tends to be slower than cython version)
+# -> TODO: implement this in cython myself to avoid importing all of pynbody
+# @numba.njit(parallel=True)  # OLD VERSION TO COMPARE
+# def _bin_particles_scatter(pos, qty, h, mins, maxs, dims, strides, total_size):
+#     N, D = pos.shape
+#     d = dims.shape[0]
+
+#     dx = (maxs - mins) / dims
+#     inv_dx = 1/dx
+    
+#     nthreads = numba.get_num_threads()
+#     thread_grids = np.zeros((nthreads, total_size))
+
+#     for n in numba.prange(N):
+#         tid = numba.get_thread_id()
+#         grid = thread_grids[tid]
+
+#         x = pos[n, 0]
+#         y = pos[n, 1]
+#         x_idx = int((x - mins[0]) * inv_dx[0])
+#         y_idx = int((y - mins[1]) * inv_dx[1])
+
+#         if x_idx < 0 or x_idx >= dims[0] or y_idx < 0 or y_idx >= dims[1]:
+#             continue
+
+#         h_i = h[n]
+
+#         # support radius = 2h (SPH kernel)
+#         r_support = 2.0 * h_i
+
+#         # compute bounding box
+#         x_min = mins[0]
+#         y_min = mins[1]
+
+#         x_start = int((pos[n,0] - r_support - x_min) * inv_dx[0])
+#         x_stop  = int((pos[n,0] + r_support - x_min) * inv_dx[0])
+#         y_start = int((pos[n,1] - r_support - y_min) * inv_dx[1])
+#         y_stop  = int((pos[n,1] + r_support - y_min) * inv_dx[1])
+
+#         # clamp
+#         if x_start < 0: x_start = 0
+#         if y_start < 0: y_start = 0
+#         if x_stop > dims[0]: x_stop = dims[0]
+#         if y_stop > dims[1]: y_stop = dims[1]
+
+#         norm = 10.0 / (7.0 * np.pi * h_i * h_i)  # 2D cubic spline normalization
+
+#         if (2.0 * h_i * inv_dx[0] < 0.5) and (2.0 * h_i * inv_dx[1] < 0.5):
+#             i = x_idx
+#             j = y_idx
+
+#             x_center = mins[0] + (i + 0.5) * dx[0]
+#             y_center = mins[1] + (j + 0.5) * dx[1]
+
+#             dxp = x - x_center
+#             dyp = y - y_center
+#             r = np.sqrt(dxp * dxp + dyp * dyp)
+#             q = r / h_i
+
+#             idx_lin = i * strides[0] + j * strides[1]
+#             if q < 2.0:
+#                 grid[idx_lin] += qty[n] * _cubic_kernel(q) * norm
+#             continue
+
+#         for i in range(x_start, x_stop):
+#             x_center = mins[0] + (i + 0.5)*dx[0]
+
+#             for j in range(y_start, y_stop):
+#                 y_center = mins[1] + (j + 0.5)*dx[1]
+
+#                 # distance
+#                 dxp = x - x_center
+#                 dyp = y - y_center
+#                 r = np.sqrt(dxp*dxp + dyp*dyp)
+
+#                 q = r / h_i
+
+#                 if q < 2.0:
+#                     w = _cubic_kernel(q) * norm
+
+#                     idx_lin = i*strides[0] + j*strides[1]
+#                     grid[idx_lin] += qty[n] * w
+
+#     grid = np.zeros(total_size)
+#     for t in range(nthreads):
+#         for i in range(total_size):
+#             grid[i] += thread_grids[t, i]
+
+#     return grid
+
+
+# def bin_particles_scatter(pos, qty, h, mins=None, maxs=None, dims=None):
+#     pos = np.asarray(pos)
+#     qty = np.asarray(qty)
+#     h = np.asarray(h)
+
+#     if dims is None:
+#         dims = np.array([512, 512], dtype=np.int64)
+#     else:
+#         dims = np.asarray(dims, dtype=np.int64)
+
+#     d = dims.shape[0]
+
+#     if mins is None:
+#         mins = np.min(pos[:, :d], axis=0)
+#     else:
+#         mins = np.asarray(mins)
+
+#     if maxs is None:
+#         maxs = np.max(pos[:, :d], axis=0)
+#     else:
+#         maxs = np.asarray(maxs)
+
+#     # strides for flattening
+#     strides = np.empty(d, dtype=np.int64)
+#     strides[d-1] = 1
+#     for i in range(d-2, -1, -1):
+#         strides[i] = strides[i+1] * dims[i+1]
+#     total_size = strides[0] * dims[0]
+
+#     return _bin_particles_scatter(pos, qty, h, mins, maxs, dims, strides, total_size).reshape(tuple(dims))
+
+# second version
+# @numba.njit(parallel=True, cache=True, fastmath=True)
+# def _bin_particles_scatter_parallel(pos, qty, h, mins, maxs, dims, strides, total_size):
+#     N, D = pos.shape
+    
+#     dx = (maxs - mins) / dims
+#     inv_dx = 1.0 / dx
+    
+#     # Internal allocation fused cleanly across threads (Loop #3 in diagnostics)
+#     grid = np.zeros(total_size, dtype=np.float64)
+    
+#     for n in numba.prange(N):
+#         x = pos[n, 0]
+#         y = pos[n, 1]
+        
+#         x_idx = int((x - mins[0]) * inv_dx[0])
+#         y_idx = int((y - mins[1]) * inv_dx[1])
+        
+#         # Out of bounds check
+#         if x_idx < 0 or x_idx >= dims[0] or y_idx < 0 or y_idx >= dims[1]:
+#             continue
+            
+#         h_i = h[n]
+#         r_support = 2.0 * h_i
+        
+#         # Exact bounding box math matching your reference code
+#         x_start = int((x - r_support - mins[0]) * inv_dx[0])
+#         x_stop = int((x + r_support - mins[0]) * inv_dx[0])
+#         y_start = int((y - r_support - mins[1]) * inv_dx[1])
+#         y_stop = int((y + r_support - mins[1]) * inv_dx[1])
+        
+#         # Boundary clamping 
+#         if x_start < 0: x_start = 0
+#         if y_start < 0: y_start = 0
+#         if x_stop > dims[0]: x_stop = dims[0]
+#         if y_stop > dims[1]: y_stop = dims[1]
+        
+#         # Dynamic Normalization Selection based on your dataset dimensionality
+#         if D == 1:
+#             norm = 2.0 / (3.0 * h_i)
+#         elif D == 2:
+#             norm = 10.0 / (7.0 * np.pi * h_i * h_i)
+#         elif D == 3:
+#             norm = 1.0 / (np.pi * h_i * h_i * h_i)
+#         else:
+#             norm = 1.0
+        
+#         # --- SUB-PIXEL ACCURACY BRANCH ---
+#         if (2.0 * h_i * inv_dx[0] < 0.5) and (2.0 * h_i * inv_dx[1] < 0.5):
+#             x_center = mins[0] + (x_idx + 0.5) * dx[0]
+#             y_center = mins[1] + (y_idx + 0.5) * dx[1]
+            
+#             dxp = x - x_center
+#             dyp = y - y_center
+#             r = np.sqrt(dxp * dxp + dyp * dyp)
+#             q = r / h_i
+            
+#             if q < 2.0:
+#                 idx_lin = x_idx * strides[0] + y_idx * strides[1]
+#                 grid[idx_lin] += qty[n] * _cubic_kernel(q) * norm
+#             continue
+            
+#         # --- STANDARD SCATTER BOUNDING BOX LOOP ---
+#         for i in range(x_start, x_stop):
+#             x_center = mins[0] + (i + 0.5) * dx[0]
+#             for j in range(y_start, y_stop):
+#                 y_center = mins[1] + (j + 0.5) * dx[1]
+                
+#                 dxp = x - x_center
+#                 dyp = y - y_center
+#                 r = np.sqrt(dxp * dxp + dyp * dyp)
+#                 q = r / h_i
+                
+#                 if q < 2.0:
+#                     w = _cubic_kernel(q) * norm
+#                     idx_lin = i * strides[0] + j * strides[1]
+#                     grid[idx_lin] += qty[n] * w
+                    
+#     return grid
+
+KERNEL_TABLE_SIZE = 4096
+
+kernel_table = np.empty(KERNEL_TABLE_SIZE, dtype=np.float64)
+
+# q² ranges from 0 to 4
+kernel_inv_dq2 = (KERNEL_TABLE_SIZE - 1) / 4.0
+
+for i in range(KERNEL_TABLE_SIZE):
+    q2 = 4.0 * i / (KERNEL_TABLE_SIZE - 1)
+    kernel_table[i] = _cubic_kernel(np.sqrt(q2))
+
+
+@numba.njit(parallel=True, cache=True, fastmath=True)
+def _bin_particles_scatter_parallel(
+    pos,
+    qty,
+    h,
+    mins,
+    maxs,
+    dims,
+    strides,
+    kernel_table,
+    kernel_inv_dq2,
+    x_centers,
+    y_centers,
+    total_size,
+):
+    N = pos.shape[0]
+    xmin, ymin = mins
+    xmax, ymax = maxs
+
+    dx0 = (xmax - xmin) / dims[0]
+    dx1 = (ymax - ymin) / dims[1]
+    inv_dx0 = 1.0 / dx0
+    inv_dx1 = 1.0 / dx1
+
+    stride0 = strides[0]
+    stride1 = strides[1]
+
+    nx = dims[0]
+    ny = dims[1]
+
+    norm_const = 10.0 / (7.0 * np.pi)
+
+    grid = np.zeros(total_size, dtype=np.float64)
+
+    for n in numba.prange(N):
+
+        x = pos[n, 0]
+        y = pos[n, 1]
+
+        q_i = qty[n]
+
+        h_i = h[n]
+        inv_h = 1.0 / h_i
+        inv_h2 = inv_h * inv_h
+
+        norm = norm_const * inv_h2
+
+        support = 2.0 * h_i
+        support2 = support * support
+
+        x_pix = (x - xmin) * inv_dx0
+        y_pix = (y - ymin) * inv_dx1
+
+        x_idx = int(x_pix)
+        y_idx = int(y_pix)
+
+        if x_idx < 0 or x_idx >= nx or y_idx < 0 or y_idx >= ny:
+            continue
+
+        r_pix_x = support * inv_dx0
+        r_pix_y = support * inv_dx1
+
+        x_start = int(x_pix - r_pix_x)
+        x_stop = int(x_pix + r_pix_x) + 1
+        y_start = int(y_pix - r_pix_y)
+        y_stop = int(y_pix + r_pix_y) + 1
+
+        if x_start < 0:
+            x_start = 0
+        if y_start < 0:
+            y_start = 0
+        if x_stop > nx:
+            x_stop = nx
+        if y_stop > ny:
+            y_stop = ny
+
+        # Small-particle shortcut
+        if r_pix_x < 0.5 and r_pix_y < 0.5:
+
+            dxp = x - x_centers[x_idx]
+            dyp = y - y_centers[y_idx]
+
+            r2 = dxp * dxp + dyp * dyp
+
+            if r2 < support2:
+                q = np.sqrt(r2) * inv_h
+                idx = x_idx * stride0 + y_idx * stride1
+                grid[idx] += q_i * (_cubic_kernel(q) * norm)
+
+            continue
+
+        for i in range(x_start, x_stop):
+
+            dxp = x - x_centers[i]
+            dxp2 = dxp * dxp
+
+            base = i * stride0
+
+            for j in range(y_start, y_stop):
+
+                dyp = y - y_centers[j]
+
+                r2 = dxp2 + dyp * dyp
+
+                if r2 >= support2:
+                    continue
+
+                # q = np.sqrt(r2) * inv_h
+
+                # grid[base + j * stride1] += q_i * (_cubic_kernel(q) * norm)
+                
+                idx = int(r2 * inv_h2 * kernel_inv_dq2)
+                if idx >= kernel_table.shape[0]:
+                    idx = kernel_table.shape[0] - 1
+
+                grid[base + j * stride1] += q_i * (kernel_table[idx] * norm)
+
+    return grid
+
+
+def bin_particles_scatter(pos, qty, h, mins=None, maxs=None, dims=None, nthreads=-1):
+    """
+    General N-dimensional scatter-splat binning algorithm.
+    Spreads particle quantities over their local smoothing lengths onto a Cartesian grid. 
+
+    Parameters
+    ----------
+    pos      : (N, D) array of particle positions
+    qty      : (N,) quantity
+    h        : (N,) or (N, D) smoothing length / search radius per particle
+    mins     : (d,) lower bounds (DEFAULT: mins of each dimension)
+    maxs     : (d,) upper bounds (DEFAULT: maxes of each dimension)
+    dims     : (d,) number of bins per dimension (DEFAULT: 512x512 image)
+    nthreads : number of threads to use (-1 for all available threads)
+    """
+    pos = np.asarray(pos, dtype=np.float64)
+    qty = np.asarray(qty, dtype=np.float64)
+    h = np.asarray(h, dtype=np.float64)
+    
+    if dims is None:
+        dims = np.array([512, 512], dtype=np.int64)
+    else:
+        dims = np.asarray(dims, dtype=np.int64)
+    d = dims.shape[0]
+    
+    if mins is None:
+        mins = np.min(pos[:, :d], axis=0).astype(np.float64)
+    else:
+        mins = np.asarray(mins, dtype=np.float64)
+        
+    if maxs is None:
+        maxs = np.max(pos[:, :d], axis=0).astype(np.float64)
+    else:
+        maxs = np.asarray(maxs, dtype=np.float64)
+        
+    if nthreads == -1:
+        nthreads = numba.config.NUMBA_NUM_THREADS
+        
+    # Structural validations
     assert len(pos.shape) == 2, 'Invalid pos format.'
     assert len(qty.shape) == 1, 'Invalid qty format.'
+    assert len(h.shape) == 1, 'Invalid h format.'
     assert len(mins.shape) == 1, 'Invalid mins format.'
-    assert len(maxs.shape) == 1, 'Invalid maxsformat.'
+    assert len(maxs.shape) == 1, 'Invalid maxs format.'
     assert len(dims.shape) == 1, 'Invalid dims format.'
     assert pos.shape[0] == qty.shape[0], 'Not matching number of particles in pos and qty.'
     assert mins.shape[0] == dims.shape[0], 'Not matching mins and dims shape.'
     assert maxs.shape[0] == dims.shape[0], 'Not matching maxs and dims shape.'
     assert dims.shape[0] <= pos.shape[1], 'Grid dimensions cannot exceed number of particle position dimensions.'
 
-    return _bin_particles_direct(pos, qty, mins, maxs, dims).reshape(tuple(dims))
-
-
-#### Scatter-splat method for SPH ####
-# -> numba version of cython implementation in pynbody (tends to be slower than cython version)
-# -> TODO: implement this in cython myself to avoid importing all of pynbody
-@numba.njit(parallel=True, fastmath=True)
-def _bin_particles_scatter(pos, qty, h, mins, maxs, dims):
-    N, D = pos.shape
-    d = dims.shape[0]
-
-    dx = (maxs - mins) / dims
-
-    # strides
+    # Calculate strides for flattening the output geometry
     strides = np.empty(d, dtype=np.int64)
-    strides[0] = 1
-    for i in range(1, d):
-        strides[i] = strides[i-1] * dims[i-1]
-
-    total_size = strides[d-1] * dims[d-1]
-    nthreads = numba.get_num_threads()
-    thread_grids = np.zeros((nthreads, total_size))
-
-    for n in numba.prange(N):
-        tid = numba.get_thread_id()
-        grid = thread_grids[tid]
-
-        x = pos[n, 0]
-        y = pos[n, 1]
-        x_idx = int((x - mins[0]) / dx[0])
-        y_idx = int((y - mins[1]) / dx[1])
-
-        if x_idx < 0 or x_idx >= dims[0] or y_idx < 0 or y_idx >= dims[1]:
-            continue
-
-        h_i = h[n]
-
-        # support radius = 2h (SPH kernel)
-        r_support = 2.0 * h_i
-
-        # compute bounding box
-        x_min = mins[0]
-        y_min = mins[1]
-
-        x_start = int((pos[n,0] - r_support - x_min) / dx[0])
-        x_stop  = int((pos[n,0] + r_support - x_min) / dx[0])
-        y_start = int((pos[n,1] - r_support - y_min) / dx[1])
-        y_stop  = int((pos[n,1] + r_support - y_min) / dx[1])
-
-        # clamp
-        if x_start < 0: x_start = 0
-        if y_start < 0: y_start = 0
-        if x_stop > dims[0]: x_stop = dims[0]
-        if y_stop > dims[1]: y_stop = dims[1]
-
-        norm = 10.0 / (7.0 * np.pi * h_i * h_i)  # 2D cubic spline normalization
-
-        if (2.0 * h_i / dx[0] < 0.5) and (2.0 * h_i / dx[1] < 0.5):
-            i = x_idx
-            j = y_idx
-
-            x_center = mins[0] + (i + 0.5) * dx[0]
-            y_center = mins[1] + (j + 0.5) * dx[1]
-
-            dxp = x - x_center
-            dyp = y - y_center
-            r = np.sqrt(dxp * dxp + dyp * dyp)
-            q = r / h_i
-
-            idx_lin = i * strides[0] + j * strides[1]
-            if q < 2.0:
-                grid[idx_lin] += qty[n] * _cubic_kernel(q) * norm
-            continue
-
-        for i in range(x_start, x_stop):
-            x_center = mins[0] + (i + 0.5)*dx[0]
-
-            for j in range(y_start, y_stop):
-                y_center = mins[1] + (j + 0.5)*dx[1]
-
-                # distance
-                dxp = x - x_center
-                dyp = y - y_center
-                r = np.sqrt(dxp*dxp + dyp*dyp)
-
-                q = r / h_i
-
-                if q < 2.0:
-                    w = _cubic_kernel(q) * norm
-
-                    idx_lin = i*strides[0] + j*strides[1]
-                    grid[idx_lin] += qty[n] * w
-
-    grid = np.zeros(total_size)
-    for t in range(nthreads):
-        for i in range(total_size):
-            grid[i] += thread_grids[t, i]
-
-    return grid
-
-def bin_particles_scatter(pos, qty, h, mins=None, maxs=None, dims=None):
-    pos = np.asarray(pos)
-    qty = np.asarray(qty)
-    h = np.asarray(h)
-
-    if dims is None:
-        dims = np.array([512, 512], dtype=np.int64)
+    strides[d-1] = 1
+    for i in range(d-2, -1, -1):
+        strides[i] = strides[i+1] * dims[i+1]
+    total_size = strides[0] * dims[0]
+    
+    if nthreads == 1:
+        grid = np.zeros(total_size, dtype=np.float64)
+        _bin_particles_scatter_serial(pos, qty, h, mins, maxs, dims, strides, grid)
     else:
-        dims = np.asarray(dims, dtype=np.int64)
+        with numba_threads(nthreads):
+            x_centers = mins[0] + (np.arange(dims[0]) + 0.5) * (maxs[0] - mins[0]) / dims[0]
+            y_centers = mins[1] + (np.arange(dims[1]) + 0.5) * (maxs[1] - mins[1]) / dims[1]
+            grid = _bin_particles_scatter_parallel(pos, qty, h, mins, maxs, dims, strides, kernel_table, kernel_inv_dq2,  x_centers, y_centers, total_size)
+            
+    return grid.reshape(tuple(dims))
 
-    d = dims.shape[0]
 
-    if mins is None:
-        mins = np.min(pos[:, :d], axis=0)
-    else:
-        mins = np.asarray(mins)
 
-    if maxs is None:
-        maxs = np.max(pos[:, :d], axis=0)
-    else:
-        maxs = np.asarray(maxs)
 
-    return _bin_particles_scatter(pos, qty, h, mins, maxs, dims).reshape(tuple(dims))
 
 
 #### Scanline rasterization method for Voronoi-like grids ####
