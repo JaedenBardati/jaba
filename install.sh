@@ -10,6 +10,9 @@ BASHRC_TEMP_FILE="${BASHRC_FILE}.tmp"
 PYENVSH_FILE="$REPO_LOCATION/scripts/pyenv.sh"
 QCSSH_FILE="$REPO_LOCATION/scripts/qcs.sh"
 
+VIMRC_FILE="$HOME/.vimrc"
+VIMRC_TEMP_FILE="${VIMRC_FILE}.tmp"
+
 PYTHON_CMD="python3"
 BREW_CMD="brew"
 CONDA_CMD="conda"  # do NOT name this CONDA_EXE; conda init overwrites that variable
@@ -19,6 +22,8 @@ PYTHON_ENVIRONMENT_TYPE="pip"
 
 JABA_VARIABLES_STRING="# >>> Added by Jaba >>>"
 JABA_VARIABLES_ENDSTRING="# <<< Added by Jaba <<<"
+JABA_VARIABLES_STRING_VIM="\" >>> Added by Jaba >>>"
+JABA_VARIABLES_ENDSTRING_VIM="\" <<< Added by Jaba <<<"
 
 INFERRED_SYSTEM="Unknown" # to be set later
 
@@ -468,13 +473,20 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         if [[ ! "$SCHEDULER_CMD" == "" ]]; then
             printf "alias qcsq='$SCHEDULER_CMD $QCSSH_FILE'\n"
         fi
-        
+
+        read -p "Also add extra script aliases? [y/n] " add_jaba_general_aliases
+        if [[ "$add_jaba_general_aliases" == "y" ]]; then
+            printf "\n#jaba extra script aliases\n"
+            printf "alias sxh='${REPO_LOCATION}/scripts/sxh.sh'\n"
+            printf "alias setup-ssh='${REPO_LOCATION}/scripts/setup_ssh.sh'\n"
+        fi
+
         read -p "Also add jaba development aliases? [y/n] " add_jaba_dev_aliases
         if [[ "$add_jaba_dev_aliases" == "y" ]]; then
             printf "\n#jaba development aliases\n"
             printf "alias jaba-cd=\"cd ${REPO_LOCATION}\"\n"
-            printf "alias jaba-cd-scripts\"cd ${REPO_LOCATION}/scripts\"\n"
-	    printf "alias jaba-pwd\"echo ${REPO_LOCATION}\"\n"
+            printf "alias jaba-scripts-cd=\"cd ${REPO_LOCATION}/scripts\"\n"
+	        printf "alias jaba-pwd=\"echo ${REPO_LOCATION}\"\n"
             printf "alias jaba-edit-install=\"vim ${REPO_LOCATION}/install.sh;\"\n"
             printf "alias jaba-edit-py=\"vim ${PYENVSH_FILE};\"\n"
             printf "alias jaba-edit-pyq=jaba-edit-py\n"
@@ -490,14 +502,21 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             printf "alias jaba-softupdate=\"(cd ${REPO_LOCATION}; git pull origin; bash ./install.sh;); source '$HOME/.bashrc';\"\n"
         fi
 
+        NON_JABA_SETTINGS_INSTALL=0
         read -p "Also add Jaeden's other (non-jaba) general aliases? [y/n] " add_general_aliases
         if [[ "$add_general_aliases" == "y" ]]; then
+            NON_JABA_SETTINGS_INSTALL=1
             printf "\n#non-jaba general aliases\n"
+            printf "alias ss='source ${BASHRC_FILE}'\n"
             printf "alias tailf='tail -f'\n"
             if [[ "$SCHEDULER_CMD" == "sbatch" ]]; then
                 printf "alias sq='squeue -u $(whoami)'\n"
             fi
-	    printf "alias ss='source ${BASHRC_FILE}'\n"
+            #colors
+            printf "unset LSCOLORS\n"
+            printf "CLICOLOR=1\n"
+            printf "export LSCOLORS=exfxcxdxcxegedabagaced\n"
+            printf "alias ls='ls -G --color=auto'\n"
         fi
 
         printf "${JABA_VARIABLES_ENDSTRING}\n"
@@ -507,9 +526,8 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
     FILE_DIFFERENCE=$(diff -u "$BASHRC_FILE" "$BASHRC_TEMP_FILE")
     if [[ ! -z "$FILE_DIFFERENCE" ]]; then
         printf "\nProposed changes to %s:\n" "$BASHRC_FILE"
-        #printf "%s\n" "${FILE_DIFFERENCE}"
         diff --color -u "$BASHRC_FILE" "$BASHRC_TEMP_FILE"
-	read -p "Should I make the above changes to your .bashrc? [y/n] " confirm_bashrc
+	    read -p "Should I make the above changes to your .bashrc? [y/n] " confirm_bashrc
         if [[ "$confirm_bashrc" == "y" ]]; then
             mv -v "$BASHRC_TEMP_FILE" "$BASHRC_FILE" > /dev/null 
         else
@@ -524,6 +542,43 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
     else
         printf "No changes were made to the .bashrc file. Removing temporary file...\n"
         rm "$BASHRC_TEMP_FILE"
+    fi
+
+    # Also install my ~/.vimrc settings
+    if [ "$NON_JABA_SETTINGS_INSTALL" -eq 1 ]; then
+        read -p "Should I also install Jaeden's vimrc settings? [y/n] " confirm_bashrc
+        printf "Installing ~/.vimrc settings...\n"
+        rsync -ac "$VIMRC_FILE" "$VIMRC_TEMP_FILE" > /dev/null || { printf "Failed to create temporary copy of vimrc file.\n"; exit 1; }
+        remove_block_between_markers "$VIMRC_TEMP_FILE" "$JABA_VARIABLES_STRING_VIM" "$JABA_VARIABLES_ENDSTRING_VIM" || exit 1
+        {
+            printf "${JABA_VARIABLES_STRING_VIM}\n"
+            printf "syntax on\n"
+            printf "colorscheme retrobox\n"
+            printf "set t_Co=256\n"
+            printf "set mouse=a\n"
+            printf "set ttymouse=xterm2\n"
+            printf "${JABA_VARIABLES_ENDSTRING_VIM}\n"
+        } >> "${VIMRC_TEMP_FILE}"
+        FILE_DIFFERENCE=$(diff -u "$VIMRC_FILE" "$VIMRC_TEMP_FILE")
+        if [[ ! -z "$FILE_DIFFERENCE" ]]; then
+            printf "\nProposed changes to %s:\n" "$VIMRC_FILE"
+            diff --color -u "$VIMRC_FILE" "$VIMRC_TEMP_FILE"
+            read -p "Should I make the above changes to your .vimrc? [y/n] " confirm_vimrc
+            if [[ "$confirm_vimrc" == "y" ]]; then
+                mv -v "$VIMRC_TEMP_FILE" "$VIMRC_FILE" > /dev/null 
+            else
+                read -p "Okay, I will abort the vimrc changes and end the program. Should I keep a backup of the proposed changes for you to look at? [y/n] " keep_vimrc_changes
+                if [[ "$keep_vimrc_changes" == "y" ]]; then
+                    printf "Keeping proposed changes at %s.\n" "$VIMRC_TEMP_FILE"
+                else
+                    rm "$VIMRC_TEMP_FILE" # remove temp file
+                fi
+                exit 0
+            fi
+        else
+            printf "No changes were made to the .vimrc file. Removing temporary file...\n"
+            rm "$VIMRC_TEMP_FILE"
+        fi
     fi
 fi
 
