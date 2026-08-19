@@ -32,10 +32,12 @@ if ! tmux has-session -t ${TMUX_SESSION_NAME} 2>/dev/null; then
     tmux new-session -d -s "${TMUX_SESSION_NAME}" -n "${TMUX_WINDOW_NAME}"
     
     # tmux session options
-    tmux set-option -g default-terminal "tmux-256color"
+    tmux set -g default-terminal "tmux-256color"
     tmux set-option -t "${TMUX_SESSION_NAME}" mouse on
     tmux bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel "pbcopy"
     tmux bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel "pbcopy"
+    export TERM=screen-256color
+
     # alternate copy-mode 
     #tmux bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-no-clear "pbcopy"
     #tmux bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-no-clear "pbcopy"
