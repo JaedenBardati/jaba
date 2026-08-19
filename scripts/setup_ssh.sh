@@ -2,7 +2,9 @@
 # This script will help you setup SSH (e.g., SSH keys, server nicknames).
 # Jaeden Bardati 2026 (jbardati@caltech.edu)
 
-YOUR_SSH_DIR="${HOME}/.ssh/"
+YOUR_SSH_DIR="~/.ssh/"
+PUBLIC_KEY=""
+PRIVATE_KEY=""
 
 info()   { echo -e "\033[1;34m[INFO]\033[0m $*"; }
 warn()   { echo -e "\033[1;33m[WARN]\033[0m $*"; }
@@ -11,6 +13,9 @@ prompt() { printf -v p '\033[1;36m[PROMPT]\033[0m %s: ' "$1"; read -r -p "$p" "$
 prompt_yn() { prompt "$1 [y/n]" YN; YN=$(echo "$YN" | tr -d ' ' | tr '[:upper:]' '[:lower:]'); } 
 
 get_keys() {
+    if [[ -n "$PUBLIC_KEY" && -n "$PRIVATE_KEY" ]]; then
+        return 0
+    fi
     cd "$YOUR_SSH_DIR" # double check that we're in the right directory (this function assumes it)
     local _PRIVATE_KEY=""
     local _PUBLIC_KEY=""
@@ -215,11 +220,62 @@ Host ${HOST_NICKNAME}
     User ${USER_NAME}
 EOF
             )
-            prompt_yn "Do you want to explicitly disallow ssh multiplexing for this host? (this is not recommended, but is necessary for some servers"
+
+            prompt_yn "Would you like to setup the ssh keys on the server now?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                SETUP_KEYS=1
+                get_keys
+
+                prompt_yn "Would you like to add this key to the ssh-agent for persistent use in this terminal session? (recommended)"
+                if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                    info "Adding the key to the ssh-agent now."
+                    if eval "$(ssh-agent -s)" >/dev/null; then
+                        if [[ "$(uname)" == "Darwin" ]]; then
+                            ssh-add --apple-use-keychain ${YOUR_SSH_DIR}/${_PRIVATE_KEY} || warn "Could not add the key to the ssh-agent. Continuing anyway, but you should do this later."
+                        else
+                            ssh-add ${YOUR_SSH_DIR}/${_PRIVATE_KEY} || warn "Could not add the key to the ssh-agent. Continuing anyway, but you should do this later."
+                        fi
+                    else
+                        warn "Could not start the ssh-agent. Continuing anyway, but you should do this later."
+                    fi
+                fi
+
+                prompt_yn "Do you want to add the key to the ssh-agent permanently? (useful but can be a security risk unless you set the private key explicitly below)";
+                if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                    CONFIG_STR="${CONFIG_STR}
+    AddKeysToAgent yes"
+                fi
+
+                if [[ "$(uname)" == "Darwin" ]]; then
+                    prompt_yn "Do you want to use the keychain to store the key? (recommended for macOS)"
+                    if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                        CONFIG_STR="${CONFIG_STR}
+    UseKeychain yes"
+                    fi
+                fi
+
+                prompt_yn "Do you want to point the config to the private key directly? (recommended)"
+                if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                    CONFIG_STR="${CONFIG_STR}
+    IdentityFile ${PRIVATE_KEY}"
+
+                    prompt_yn "Do you want to explicitly only allow the private key you just specified to be used in the config? (recommended)"
+                    if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                        CONFIG_STR="${CONFIG_STR}
+    IdentitiesOnly yes"
+                    fi
+                fi
+
+            else
+                SETUP_KEYS=0
+            fi
+
+            prompt_yn "Do you want to explicitly disallow ssh multiplexing for this host? (not recommended, but is necessary for some servers)"
             if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
                 CONFIG_STR="${CONFIG_STR}
     ControlMaster no"
             fi
+
             CONFIG_STR="${CONFIG_STR}
 "
 
@@ -240,11 +296,7 @@ $CONFIG_STR"
         done
 
         # set it up on the server side
-        prompt_yn "Do you want to setup ssh keys with this server?"
-        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
-            info "Great, let's set up the local key you want to use."
-            get_keys
-
+        if [[ "$SETUP_KEYS" == "1" ]]; then
             info "Now I'll set up your key on the server side."
             if command -v ssh-copy-id >/dev/null 2>&1; then
                 ssh-copy-id -i "${PUBLIC_KEY}" "${HOST_NICKNAME}" || error "It seems like ssh-copy-id failed. You will have to manually set up your public key on the server side. You can do this by copying the contents of ${PUBLIC_KEY} into the file ~/.ssh/authorized_keys on the server."
