@@ -383,7 +383,38 @@ EOF
 fi
 
 # Set up github keys if desired
-#prompt_yn "Would you like to setup github keys?" # TODO
+prompt_yn "Would you like to setup github keys?"
+if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+    get_keys
+
+    TRY_GH=1
+    while true; do
+        info "Now I'll set up your key on github."
+        if [[ "${TRY_GH}" == "1" ]] && command -v gh >/dev/null 2>&1; then
+            info "Using gh to set up your key on github."
+            gh auth login || { warn "It seems like gh auth failed. You will have to manually set up your public key."; TRY_GH=0; break; }
+            gh ssh-key add "${PUBLIC_KEY}" --title "$(whoami)@$(hostname)" || { warn "It seems like gh ssh-key add failed. You will have to manually set up your public key."; TRY_GH=0; break; }
+        else
+            info "Since gh is not installed, you will have to set up your key manually with a web browser."
+            info "Here are the contents of your public key:"
+            cat "${PUBLIC_KEY}"
+            if [[ "$(uname)" == "Darwin" ]] && [[ -n "$(command -v pbcopy)" ]]; then
+                pbcopy < "${PUBLIC_KEY}"
+                info "I have copied your public key to your clipboard for you."
+            else
+                info "I could not copy your public key to your clipboard automatically. Please copy it manually."
+            fi
+            info "Please paste it into your github account settings under SSH keys (https://github.com/settings/keys)."
+            prompt "Press enter when you have completed this..." DUMMY
+        fi
+
+        prompt_yn "Do you want to test your github SSH connection now?"
+        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+            ssh -T git@github.com && break || warn "Something went wrong with the github SSH connection test. You may not have copied the public key correctly. Let's try again"
+        fi
+    done
+    info "Successfully set up your github SSH keys."
+fi
 
 
 # look at what was changed and delete backup if desired
