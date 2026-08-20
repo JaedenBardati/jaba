@@ -517,8 +517,8 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         printf "export JABA_PYTHON_ENVIRONMENT_TYPE=\"%s\"\n" "$PYTHON_ENVIRONMENT_TYPE"
 
         printf "alias jaba-uninstall=\"(cd ${REPO_LOCATION}; bash ./uninstall.sh;)\"\n"
-        printf "alias jaba-reinstall=\"(cd ${REPO_LOCATION}; bash ./install.sh;); source '$HOME/.bashrc';\"\n"
-        printf "alias jaba-update=\"(cd ${REPO_LOCATION}; bash ./uninstall.sh; git pull origin; bash ./install.sh;); source '$HOME/.bashrc';\"\n"
+        printf "alias jaba-reinstall=\"(cd ${REPO_LOCATION}; bash ./install.sh;); source '$BASHRC_FILE';\"\n"
+        printf "alias jaba-update=\"(cd ${REPO_LOCATION}; bash ./uninstall.sh; git pull origin; bash ./install.sh;); source '$BASHRC_FILE';\"\n"
 
         printf "\n#python environment\n"
 	    printf "activate_jaba_python_environment () { %s }\n" "${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}"
@@ -563,7 +563,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
 	        printf "alias jaba-commit=\"(cd ${REPO_LOCATION}; git add .; git commit;)\"\n"
             printf "alias jaba-push=\"(cd ${REPO_LOCATION}; git push origin;)\"\n"
             printf "alias jaba-fetch=\"(cd ${REPO_LOCATION}; git fetch origin;)\"\n"
-            printf "alias jaba-softupdate=\"(cd ${REPO_LOCATION}; git pull origin; bash ./install.sh;); source '$HOME/.bashrc';\"\n"
+            printf "alias jaba-softupdate=\"(cd ${REPO_LOCATION}; git pull origin; bash ./install.sh;); source '$BASHRC_FILE';\"\n"
         fi
 
         NON_JABA_SETTINGS_INSTALL=0
