@@ -238,16 +238,15 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
     ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS=""
     DEACTIVATE_PYTHON_ENVIRONMENT_COMMANDS=""
 
-    ## > install/load in python
+    ## > install/load in python and other required packages
     if [[ $PYTHON_INSTALL_METHOD == "homebrew" ]]; then
         # >> install homebrew if needed
         if ! command -v "${BREW_CMD}" &> /dev/null; then
             prompt_yn "Homebrew is not installed. Attempt to install homebrew?"
             if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
-                info "Installing homebrew..."
+                error "Installing homebrew..."
                 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || {
-                    info "Homebrew installation failed."
-                    exit 1
+                    error "Homebrew installation failed."
                 }
 
                 # >>> make brew available in the current shell if installer didn't.
@@ -260,12 +259,35 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
                 fi
                 
                 if ! command -v "${BREW_CMD}" &> /dev/null; then
-                    info "Homebrew installed, but '${BREW_CMD}' is still not on PATH. Restart your shell or add brew to PATH, then re-run setup."
-                    exit 1
+                    error "Homebrew installed, but '${BREW_CMD}' is still not on PATH. Restart your shell or add brew to PATH, then re-run setup."
                 fi
             else
-                info "Homebrew is required for this installation method. Please install homebrew or modify setup.sh to specify a different installation method."
-                exit 1
+                error "Homebrew is required for this installation method. Please install homebrew or modify setup.sh to specify a different installation method."
+            fi
+        fi
+
+        # >> install git if needed
+        if ! command -v "git" &> /dev/null; then
+            prompt_yn "git is not installed. Attempt to install git via homebrew?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Installing git via homebrew..."
+                $BREW_CMD install git
+            fi
+        fi
+        # >> install rsync if needed (not strictly required)
+        if ! command -v "rsync" &> /dev/null; then
+            prompt_yn "rsync is not installed. Attempt to install rsync via homebrew?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Installing rsync via homebrew..."
+                $BREW_CMD install rsync
+            fi
+        fi
+        # >> install tmux if needed (not strictly required)
+        if ! command -v "tmux" &> /dev/null; then
+            prompt_yn "tmux is not installed. Attempt to install tmux via homebrew?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Installing tmux via homebrew..."
+                $BREW_CMD install tmux
             fi
         fi
         # >> install python if needed
@@ -307,7 +329,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
                 ) | while read -r LINE; do custom_qualifer "git install" "$LINE"; done
             fi
         fi
-        # >> install rsync if needed
+        # >> install rsync if needed (not strictly required)
         if ! command -v "rsync" &> /dev/null; then
             prompt_yn "rsync is not installed. Attempt to install rsync via apt-get?"
             if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
@@ -318,45 +340,59 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
                 ) | while read -r LINE; do custom_qualifer "rsync install" "$LINE"; done
             fi
         fi
+        # >> install tmux if needed (not strictly required)
+        if ! command -v "tmux" &> /dev/null; then
+            prompt_yn "tmux is not installed. Attempt to install tmux via apt-get?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Installing tmux via apt-get..."
+                (
+                sudo apt-get -y update
+                sudo apt-get -y install tmux
+                ) | while read -r LINE; do custom_qualifer "tmux install" "$LINE"; done
+            fi
+        fi
         # >> install python if needed
         if ! command -v "${PYTHON_CMD}" &> /dev/null; then
             prompt_yn "Python3 is not installed. Attempt to install ${PYTHON_CMD} via apt-get?"
             if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
                 info "Installing ${PYTHON_CMD} via apt-get..."
                 (
-		sudo apt-get -y update
+		        sudo apt-get -y update
                 sudo apt-get -y install ${PYTHON_CMD}
-	        ) | while read -r LINE; do custom_qualifer "${PYTHON_CMD} install" "$LINE"; done
+	            ) | while read -r LINE; do custom_qualifer "${PYTHON_CMD} install" "$LINE"; done
             fi
         fi
-	# >> install pip if needed
-	if ! "${PYTHON_CMD}" -m pip --help &> /dev/null; then
-	    prompt_yn "Pip is not installed. Attempt to install pip via apt-get?"
-	    if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+        # >> install pip if needed
+        if ! "${PYTHON_CMD}" -m pip --help &> /dev/null; then
+            prompt_yn "Pip is not installed. Attempt to install pip via apt-get?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
                 info "Installing pip via apt-get..."
-		(
-		sudo apt-get -y update
-		sudo apt-get -y install ${PYTHON_CMD}-pip
-	        ) | while read -r LINE; do custom_qualifer "${PYTHON_CMD}-pip install" "$LINE"; done 
-	    fi
-	fi
-	# >> install venv if needed
+                (
+                sudo apt-get -y update
+                sudo apt-get -y install ${PYTHON_CMD}-pip
+                ) | while read -r LINE; do custom_qualifer "${PYTHON_CMD}-pip install" "$LINE"; done 
+            fi
+        fi
+        # >> install venv if needed
         if [[ "$PYTHON_ENVIRONMENT_TYPE" == "pip" ]] && ( ( [[ "$SYSTEM_SUBTYPE" == "GNU/Linux" ]] && ! command -v "${PYTHON_CMD}-venv" &> /dev/null ) || ( ! "${PYTHON_CMD}" -m venv --help &> /dev/null) ) ; then
             prompt_yn "Venv is not installed. Attempt to install venv via apt-get?"
-	    if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
-                info "Installing venv via apt-get..."
-		(
-		sudo apt-get -y update
-		sudo apt-get -y install ${PYTHON_CMD}-venv
-	        ) | while read -r LINE; do custom_qualifer "${PYTHON_CMD}-venv install" "$LINE"; done
-	    fi
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                    info "Installing venv via apt-get..."
+            (
+            sudo apt-get -y update
+            sudo apt-get -y install ${PYTHON_CMD}-venv
+            ) | while read -r LINE; do custom_qualifer "${PYTHON_CMD}-venv install" "$LINE"; done
+            fi
         fi
         # >> install conda if needed
-	if [[ "$PYTHON_ENVIRONMENT_TYPE" == "conda" ]] && ! command -v "${CONDA_CMD}" &> /dev/null; then
-            prompt_yn "Conda is not installed. Attempt to install conda via homebrew?"
+	    if [[ "$PYTHON_ENVIRONMENT_TYPE" == "conda" ]] && ! command -v "${CONDA_CMD}" &> /dev/null; then
+            prompt_yn "Conda is not installed. Attempt to install conda via apt-get?"
             if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
-                info "Installing conda via homebrew..."
-                $BREW_CMD install --cask miniconda 
+                info "Installing conda via apt-get..."
+                (
+                sudo apt-get -y update
+                sudo apt-get -y install miniconda
+                ) | while read -r LINE; do custom_qualifer "conda install" "$LINE"; done
             fi
         fi 
     elif [[ $PYTHON_INSTALL_METHOD == "module" ]]; then
@@ -371,6 +407,34 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }module purge; module load ${MAIN_PACKAGE_MODULES};"
     else
         error "Unknown python installation method \"${PYTHON_INSTALL_METHOD}\". Please modify setup.sh to specify how you want to install or load python."
+    fi
+
+    ### > setup git/github if needed
+    SETUP_GIT=0
+    if [ -z "$(git config user.name)" ]; then
+        prompt "Git user.name is not set on this system. Please enter your git user.name" GIT_USER_NAME
+        git config --global user.name "$GIT_USER_NAME"
+        SETUP_GIT=1
+    fi
+    if [ -z "$(git config user.email)" ]; then
+        prompt "Git user.email is not set on this system. Please enter your git user.email (note this should match e.g., one of your GitHub emails)" GIT_USER_EMAIL
+        git config --global user.email "$GIT_USER_EMAIL"
+        SETUP_GIT=1
+    fi
+    if [[ $SETUP_GIT -eq 1 ]]; then
+        if [ "$(git config init.defaultBranch)" != "main" ]; then
+            prompt_yn "This might be an older version of git since the default branch is not set to main. Do you want to set it to main? (recommended)"
+            git config --global init.defaultBranch main
+        fi
+
+        prompt_yn "Do you want to set up Github SSH keys for this system? (recommended for pushing to GitHub)"
+        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+            info "Okay, I'll launch a generic script to set up SSH keys. Many of the prompts may be irrelevant for your use case."
+            printf "--------------------------------\n"
+            /bin/bash "$REPO_LOCATION/scripts/setup_ssh.sh" </dev/tty || { error "Failed to set up Github SSH keys."; }
+            printf "--------------------------------\n"
+            info "Done setting up Github SSH keys."
+        fi
     fi
 
     ### > make/load python environment
@@ -430,7 +494,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
 	fi
     fi
     
-    rsync -ac "$BASHRC_FILE" "$BASHRC_TEMP_FILE" > /dev/null || { error "Failed to create temporary copy of bashrc file."; }
+    cp "$BASHRC_FILE" "$BASHRC_TEMP_FILE" > /dev/null || { error "Failed to create temporary copy of bashrc file."; }
     remove_block_between_markers "$BASHRC_TEMP_FILE" "$JABA_VARIABLES_STRING" "$JABA_VARIABLES_ENDSTRING" || exit 1
     {
         printf "${JABA_VARIABLES_STRING}\n"
@@ -550,7 +614,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
     if [ "$NON_JABA_SETTINGS_INSTALL" -eq 1 ]; then
         prompt_yn "Should I also install Jaeden's vimrc settings?"
         info "Attempting to install ~/.vimrc settings..."
-        rsync -ac "$VIMRC_FILE" "$VIMRC_TEMP_FILE" > /dev/null || { error "Failed to create temporary copy of vimrc file."; }
+        cp "$VIMRC_FILE" "$VIMRC_TEMP_FILE" > /dev/null || { error "Failed to create temporary copy of vimrc file."; }
         remove_block_between_markers "$VIMRC_TEMP_FILE" "$JABA_VARIABLES_STRING_VIM" "$JABA_VARIABLES_ENDSTRING_VIM" || exit 1
         {
             printf "${JABA_VARIABLES_STRING_VIM}\n"
@@ -558,7 +622,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             printf "colorscheme retrobox\n"
             printf "set t_Co=256\n"
             printf "set mouse=a\n"
-            printf "set ttymouse=xterm2\n"
+            printf "set ttymouse=sgr\n"
             printf "${JABA_VARIABLES_ENDSTRING_VIM}\n"
         } >> "${VIMRC_TEMP_FILE}"
         FILE_DIFFERENCE=$(diff -u "$VIMRC_FILE" "$VIMRC_TEMP_FILE")
