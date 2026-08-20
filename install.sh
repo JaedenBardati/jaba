@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 REPO_LOCATION="$(cd "$(dirname "$0")" && pwd)" # start in the repo directory (assuming setup.sh is in the root)
 cd $REPO_LOCATION
-printf "....JABA INSTALLATION....\n"
 
+info()   { echo -e "\033[1;34m[INFO]\033[0m $*"; }
+warn()   { echo -e "\033[1;33m[WARN]\033[0m $*"; }
+error()  { echo -e "\033[1;31m[ERROR]\033[0m $*" >&2; exit 1; }
+prompt() { printf -v p "\033[1;36m[PROMPT]\033[0m ${1}: "; read -p "$p" "$2"; }
+prompt_yn() { prompt "$1 [y/n]" YN; YN=$(echo "$YN" | tr -d ' ' | tr '[:upper:]' '[:lower:]'); }
+custom_qualifer() { echo -e '\033[38;5;208m['"${1}"']\033[0m '"$2"; } 
+
+info ".... JABA INSTALLATION ...."
 ##############################
 # defaults
 BASHRC_FILE="$HOME/.bashrc"  # only use bashrc for simplicity, even if on mac, but then redirect bash_profile/zshrc to source bashrc
@@ -20,10 +27,12 @@ JUPYTER_CMD="jupyter notebook" # or jupyter lab if you prefer (change here)
 PYTHON_ENVIRONMENT_NAME="jaba_env"
 PYTHON_ENVIRONMENT_TYPE="pip" 
 
-JABA_VARIABLES_STRING="# >>> Added by Jaba >>>"
-JABA_VARIABLES_ENDSTRING="# <<< Added by Jaba <<<"
-JABA_VARIABLES_STRING_VIM="\" >>> Added by Jaba >>>"
-JABA_VARIABLES_ENDSTRING_VIM="\" <<< Added by Jaba <<<"
+JABA_ADDED_STRING=">>> Added by Jaba >>>"
+JABA_ADDED_ENDSTRING="<<< Added by Jaba <<<"
+JABA_VARIABLES_STRING="# ${JABA_ADDED_STRING}"
+JABA_VARIABLES_ENDSTRING="# ${JABA_ADDED_ENDSTRING}"
+JABA_VARIABLES_STRING_VIM="\" ${JABA_ADDED_STRING}"
+JABA_VARIABLES_ENDSTRING_VIM="\" ${JABA_ADDED_ENDSTRING}"
 
 INFERRED_SYSTEM="Unknown" # to be set later
 
@@ -35,17 +44,16 @@ JABA_LOCATION=REPO_LOCATION # safeguard for code errors
 SYSTEM_TYPE="$(uname -s)"
 if [[ "$SYSTEM_TYPE" == "Darwin" ]]; then
     # MAC
-    printf "I think you are using a Mac.\n"
+    info "I think you are using a Mac."
     PYTHON_INSTALL_METHOD="homebrew"
     INFERRED_SYSTEM="General Mac"
 elif [[ "$SYSTEM_TYPE" == "Linux" ]]; then
     # LINUX
-    printf "I think you are using Linux.\n"
+    info "I think you are using Linux."
     PYTHON_INSTALL_METHOD="apt-get"
     INFERRED_SYSTEM="General Linux Local"
 else
-    printf "I can't tell what system you are using... I get '$SYSTEM_TYPE' from 'uname -s'. Please check and modify jaba's setup.sh accordingly.\n"
-    exit 1
+    error "I can't tell what system you are using... I get '$SYSTEM_TYPE' from 'uname -s'. Please check and modify jaba's setup.sh accordingly."
 fi
 SYSTEM_SUBTYPE="$(uname -o)"
 
@@ -53,17 +61,17 @@ SYSTEM_SUBTYPE="$(uname -o)"
 SCHEDULER_CMD=""  # leave blank if no scheduler
 SRUN_CMD=""
 if sinfo --version &> /dev/null; then
-    printf "Slurm is available.\n"
+    info "Slurm is available."
     SCHEDULER_CMD="sbatch"
     SRUN_CMD="srun"
     if module --version &> /dev/null; then
-        printf "Module system is available.\n"
+        info "Module system is available."
         PYTHON_INSTALL_METHOD="module"
     else
-        printf "There is no module system available, but slurm somehow is? This is unexpected. Please check and modify jaba's setup.sh accordingly.\n"
+        error "There is no module system available, but slurm somehow is? This is unexpected. Please check and modify jaba's setup.sh accordingly."
     fi
 else
-    printf "Slurm is not available. I will assume that you have don't have a task scheduler.\n"
+    info "Slurm is not available. I will assume that you have don't have a task scheduler."
 fi
 if [[ "$SYSTEM_TYPE" == "Linux" && "$SCHEDULER_CMD" != "" ]]; then
     INFERRED_SYSTEM="General Linux Server"
@@ -72,31 +80,29 @@ fi
 ### infer host, override variables as needed (CHANGE THIS IF YOU HAVE AN UNRECOGNIZED SYSTEM TYPE OR NEED PERSONAL DEFAULTS)
 HOSTNAME="$(hostname)"
 if [[ "$HOSTNAME" == *"frontera"* && "$SYSTEM_TYPE" == "Linux" && "$SCHEDULER_CMD" == "sbatch" ]]; then
-    printf "I think you are on Frontera. Resetting parameters accordingly.\n"
+    info "I think you are on Frontera. Resetting parameters accordingly."
     INFERRED_SYSTEM="Frontera"
     SRUN_CMD="ibrun"
     MAIN_PACKAGE_MODULES="intel/19.1.1 mvapich2-x/2.3 python3/3.7.0 phdf5/1.10.4"
 elif [[ "$HOSTNAME" == "Jaedens-MacBook-Pro.local" && "$SYSTEM_TYPE" == "Darwin" && "$SCHEDULER_CMD" == "" ]]; then
-    printf "I think you are on Jaeden's MacBook Pro. Resetting parameters accordingly.\n"
+    info "I think you are on Jaeden's MacBook Pro. Resetting parameters accordingly."
     INFERRED_SYSTEM="Jaedens MacBook"
     PYTHON_ENVIRONMENT_TYPE="conda"
 #...
 else
-    printf "I don't recognize your host '$HOSTNAME'. " 
+    info "I don't recognize your host '$HOSTNAME'." 
     if [[ $SCHEDULER_CMD == "" ]]; then
-        printf "Since you don't appear to be on a cluster, I'll try setting up everything up using the defaults for your machine type.\n"
+        info "Since you don't appear to be on a cluster, I'll try setting up everything up using the defaults for your machine type."
     else
-        printf "Yet you appear to be on a cluster...\n" 
-        printf "[warning] I'll try using some defaults, but I would highly suggest modifying jaba's setup.sh to add the relevant modules.\n"
+        warn "Yet you appear to be on a cluster... I'll try using some defaults, but I would highly suggest modifying jaba's setup.sh to add the relevant modules."
         MAIN_PACKAGE_MODULES="intel impi ${PYTHON_CMD}"
     fi
 fi
-printf "\n"
 
 ### check if bashrc exists and if not, create it
 if [[ ! -e "$BASHRC_FILE" ]]; then
-    printf "Creating %s (it did not exist).\n" "$BASHRC_FILE"
-    touch "$BASHRC_FILE" || { printf "Failed to create %s\n" "$BASHRC_FILE"; exit 1; }
+    info "Creating ${BASHRC_FILE} (it did not exist)."
+    touch "$BASHRC_FILE" || { error "Failed to create ${BASHRC_FILE}"; }
 fi
 
 ### if local, add .zshrc and .bash_profile to source .bashrc if it doesn't already (or zshrc if using zsh)
@@ -104,63 +110,62 @@ if [[ "$SCHEDULER_CMD" == "" ]]; then
     ZSHRC_FILE="$HOME/.zshrc"
     if [[ ! -e "$ZSHRC_FILE" ]]; then
 	if [[ "${SYSTEM_TYPE}" == "Darwin" ]]; then 
-            read -p "Do want to create a .zshrc file that sources .bashrc? (do this if you regularly use zsh, recommended for mac) [y/n] " create_zshrc
-            if [[ "$create_zshrc" == "y" ]]; then
-                printf "Creating %s (it did not exist).\n" "$ZSHRC_FILE"
-                echo "source $BASHRC_FILE" > "$ZSHRC_FILE" || { printf "Failed to create %s\n" "$ZSHRC_FILE"; exit 1; }
+            prompt_yn "Do want to create a .zshrc file that sources .bashrc? (do this if you regularly use zsh, recommended for mac)"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Creating ${ZSHRC_FILE} (it did not exist)."
+                echo "source $BASHRC_FILE" > "$ZSHRC_FILE" || { error "Failed to create ${ZSHRC_FILE}"; }
             fi
 	else
-            printf "skipping .zshrc redirect to .bashrc since you are not on a mac\n"
+            info "skipping .zshrc redirect to .bashrc since you are not on a mac"
 	fi
     else
         source "$ZSHRC_FILE"
         if ! grep -q "source $BASHRC_FILE" "$ZSHRC_FILE"; then
-            printf "Adding source bashrc command to %s.\n" "$ZSHRC_FILE"
-            echo "source $BASHRC_FILE" >> "$ZSHRC_FILE" || { printf "Failed to update %s\n" "$ZSHRC_FILE"; exit 1; }
+            info "Adding source bashrc command to ${ZSHRC_FILE}."
+            echo "source $BASHRC_FILE" >> "$ZSHRC_FILE" || { error "Failed to update ${ZSHRC_FILE}"; }
         else
-	    printf "your .zshrc already redirects to .bashrc\n"
+	    info "your .zshrc already redirects to .bashrc"
 	fi
     fi
 
     BASH_PROFILE_FILE="$HOME/.bash_profile"
     if [[ ! -e "$BASH_PROFILE_FILE" ]]; then
-        read -p "Do want to create a .bash_profile file that sources .bashrc? (do this if you regularly use bash) [y/n] " create_bash_profile
-        if [[ "$create_bash_profile" == "y" ]]; then
-            printf "Creating %s (it did not exist).\n" "$BASH_PROFILE_FILE"
-            echo "source $BASHRC_FILE" > "$BASH_PROFILE_FILE" || { printf "Failed to create %s\n" "$BASH_PROFILE_FILE"; exit 1; }
+        prompt_yn "Do want to create a .bash_profile file that sources .bashrc? (do this if you regularly use bash)"
+        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+            info "Creating ${BASH_PROFILE_FILE} (it did not exist)."
+            echo "source $BASHRC_FILE" > "$BASH_PROFILE_FILE" || { error "Failed to create ${BASH_PROFILE_FILE}"; }
         fi
     else
         source "$BASH_PROFILE_FILE"
         if ! grep -q "source $BASHRC_FILE" "$BASH_PROFILE_FILE"; then
-            printf "Adding source bashrc command to %s.\n" "$BASH_PROFILE_FILE"
-            echo "source $BASHRC_FILE" >> "$BASH_PROFILE_FILE" || { printf "Failed to update %s\n" "$BASH_PROFILE_FILE"; exit 1; }
+            info "Adding source bashrc command to ${BASH_PROFILE_FILE}."
+            echo "source $BASHRC_FILE" >> "$BASH_PROFILE_FILE" || { error "Failed to update ${BASH_PROFILE_FILE}"; }
         else
-	    printf "your .bash_profile already redirects to .bashrc\n"
+	    info "your .bash_profile already redirects to .bashrc"
 	fi
     fi
 
     SH_PROFILE_FILE="$HOME/.profile"
     if [[ ! -e "$SH_PROFILE_FILE" ]]; then
 	if [[ "${SYSTEM_TYPE}" != "Darwin" ]]; then
-            read -p "Do want to create a .profile file that sources .bashrc? (do this if you regularly use sh) [y/n] " create_sh_profile
-            if [[ "$create_sh_profile" == "y" ]]; then
-                printf "Creating %s (it did not exist).\n" "$SH_PROFILE_FILE"
-                echo "source $BASHRC_FILE" > "$SH_PROFILE_FILE" || { printf "Failed to create %s\n" "$SH_PROFILE_FILE"; exit 1; }
+            prompt_yn "Do want to create a .profile file that sources .bashrc? (do this if you regularly use sh)"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Creating ${SH_PROFILE_FILE} (it did not exist)."
+                echo "source $BASHRC_FILE" > "$SH_PROFILE_FILE" || { error "Failed to create ${SH_PROFILE_FILE}"; }
 	    fi
 	else
-            printf "skipping .profile redirect to .bashrc since you are on a mac\n"
+            info "skipping .profile redirect to .bashrc since you are on a mac"
 	fi
     else
         source "$SH_PROFILE_FILE"
         if ! grep -q "source $BASHRC_FILE" "$SH_PROFILE_FILE"; then
-            printf "Adding source bashrc command to %s.\n" "$SH_PROFILE_FILE"
-            echo "source $BASHRC_FILE" >> "$SH_PROFILE_FILE" || { printf "Failed to update %s\n" "$SH_PROFILE_FILE"; exit 1; }
+            info "Adding source bashrc command to ${SH_PROFILE_FILE}."
+            echo "source $BASHRC_FILE" >> "$SH_PROFILE_FILE" || { error "Failed to update ${SH_PROFILE_FILE}"; }
         else
-	    printf "your .profile already redirects to .bashrc\n"
+	    info "your .profile already redirects to .bashrc"
 	fi
     fi
 fi
-printf "\n" 
 
 ##############################
 ## main setup script
@@ -170,8 +175,8 @@ remove_block_between_markers() {
     local start_marker="$2"
     local end_marker="$3"
 
-    if [[ ! -f "$target_file" ]]; then
-        printf "No file found at %s; nothing to reset.\n" "$target_file"
+    if [[ ! -f "${target_file}" ]]; then
+        info "No file found at ${target_file}; nothing to reset."
         return 1
     fi
 
@@ -191,21 +196,21 @@ remove_block_between_markers() {
     local awk_status=$?
 
     if [[ $awk_status -eq 2 ]]; then
-        printf "Found start marker '%s' but not end marker '%s' in %s; refusing to modify.\n" "$start_marker" "$end_marker" "$target_file"
+        info "Found start marker '${start_marker}' but not end marker '${end_marker}' in ${target_file}; refusing to modify."
         rm -f "$tmp_file"
         return 1
     elif [[ $awk_status -eq 3 ]]; then
-        #printf "Did not find start marker '%s' in %s; nothing to remove.\n" "$start_marker" "$target_file"
+        #info "Did not find start marker \"${start_marker}\" in \"${target_file}\"; nothing to remove."
         rm -f "$tmp_file"
         return 0
     elif [[ $awk_status -ne 0 ]]; then
-        printf "Failed to process %s for reset (awk status %s).\n" "$target_file" "$awk_status"
+        info "Failed to process ${target_file} for reset (awk status ${awk_status})."
         rm -f "$tmp_file"
         return 1
     fi
 
     if ! mv "$tmp_file" "$target_file"; then
-        printf "Failed to copy over temporary file %s to target file %s.\n" "$tmp_file" "$target_file"
+        info "Failed to copy over temporary file ${tmp_file} to target file ${target_file}."
         rm -f "$tmp_file"
         return 1
     fi
@@ -217,15 +222,15 @@ remove_block_between_markers() {
 ### check if jaba block already exists in bashrc, and if so, ask user if they want to reset it, or keep it but skip the main setup
 DO_MAIN_SETUP="N"
 if grep -Fxq "$JABA_VARIABLES_STRING" "$BASHRC_FILE"; then
-    printf "Jaba variables already in ${BASHRC_FILE}.\n"
-    read -p "Reset jaba? [y/n] " reset_jaba
-    if [[ "$reset_jaba" == "y" ]]; then
+    info "Jaba variables already in ${BASHRC_FILE}."
+    prompt_yn "Reset jaba?"
+    if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
         DO_MAIN_SETUP="Y"
     else
-        printf "Skipping main setup.\n"
+        info "Skipping main setup."
     fi
 else
-    printf "Jaba variables not already in ${BASHRC_FILE}.\n"
+    info "Jaba variables not already in ${BASHRC_FILE}."
     DO_MAIN_SETUP="Y"
 fi
 
@@ -237,11 +242,11 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
     if [[ $PYTHON_INSTALL_METHOD == "homebrew" ]]; then
         # >> install homebrew if needed
         if ! command -v "${BREW_CMD}" &> /dev/null; then
-            read -p "Homebrew is not installed. Attempt to install homebrew? [y/n] " install_brew
-            if [[ "$install_brew" == "y" ]]; then
-                printf "Installing homebrew...\n"
+            prompt_yn "Homebrew is not installed. Attempt to install homebrew?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Installing homebrew..."
                 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || {
-                    printf "Homebrew installation failed.\n"
+                    info "Homebrew installation failed."
                     exit 1
                 }
 
@@ -255,157 +260,153 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
                 fi
                 
                 if ! command -v "${BREW_CMD}" &> /dev/null; then
-                    printf "Homebrew installed, but '%s' is still not on PATH. Restart your shell or add brew to PATH, then re-run setup.\n" "${BREW_CMD}"
+                    info "Homebrew installed, but '${BREW_CMD}' is still not on PATH. Restart your shell or add brew to PATH, then re-run setup."
                     exit 1
                 fi
             else
-                printf "Homebrew is required for this installation method. Please install homebrew or modify setup.sh to specify a different installation method.\n"
+                info "Homebrew is required for this installation method. Please install homebrew or modify setup.sh to specify a different installation method."
                 exit 1
             fi
         fi
         # >> install python if needed
         if ! command -v "${PYTHON_CMD}" &> /dev/null; then
-            read -p "Python3 is not installed. Attempt to install ${PYTHON_CMD} via homebrew? [y/n] " install_python
-            if [[ "$install_python" == "y" ]]; then
-                printf "Installing ${PYTHON_CMD} via homebrew...\n"
+            prompt_yn "Python3 is not installed. Attempt to install ${PYTHON_CMD} via homebrew?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Installing ${PYTHON_CMD} via homebrew..."
                 $BREW_CMD install ${PYTHON_CMD}
             fi
         fi
         # >> install conda if needed
         if [[ "$PYTHON_ENVIRONMENT_TYPE" == "conda" ]] && ! command -v "${CONDA_CMD}" &> /dev/null; then
-            read -p "Conda is not installed. Attempt to install conda via homebrew? [y/n] " install_conda
-            if [[ "$install_conda" == "y" ]]; then
-                printf "Installing conda via homebrew...\n"
+            prompt_yn "Conda is not installed. Attempt to install conda via homebrew?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Installing conda via homebrew..."
                 $BREW_CMD install --cask miniconda
             fi
         fi  
     elif [[ $PYTHON_INSTALL_METHOD == "apt-get" ]]; then
         # >> install vim if needed
         if ! command -v "vim" &> /dev/null; then
-            read -p "vim is not installed. Attempt to install vim via apt-get? [y/n] " install_vim
-            if [[ "$install_vim" == "y" ]]; then
-                printf "Installing vim via apt-get...\n"
+            prompt_yn "vim is not installed. Attempt to install vim via apt-get?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Installing vim via apt-get..."
                 (
                 sudo apt-get -y update
                 sudo apt-get -y install vim
-                ) | while read -r LINE; do echo "[vim install] $LINE"; done
+                ) | while read -r LINE; do custom_qualifer "vim install" "$LINE"; done
             fi
         fi
         # >> install git if needed
         if ! command -v "git" &> /dev/null; then
-            read -p "git is not installed. Attempt to install git via apt-get? [y/n] " install_git
-            if [[ "$install_git" == "y" ]]; then
-                printf "Installing git via apt-get...\n"
+            prompt_yn "git is not installed. Attempt to install git via apt-get?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Installing git via apt-get..."
                 (
                 sudo apt-get -y update
                 sudo apt-get -y install git
-                ) | while read -r LINE; do echo "[git install] $LINE"; done
+                ) | while read -r LINE; do custom_qualifer "git install" "$LINE"; done
             fi
         fi
         # >> install rsync if needed
         if ! command -v "rsync" &> /dev/null; then
-            read -p "rsync is not installed. Attempt to install rsync via apt-get? [y/n] " install_rsync
-            if [[ "$install_rsync" == "y" ]]; then
-                printf "Installing rsync via apt-get...\n"
+            prompt_yn "rsync is not installed. Attempt to install rsync via apt-get?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Installing rsync via apt-get..."
                 (
                 sudo apt-get -y update
                 sudo apt-get -y install rsync
-                ) | while read -r LINE; do echo "[rsync install] $LINE"; done
+                ) | while read -r LINE; do custom_qualifer "rsync install" "$LINE"; done
             fi
         fi
         # >> install python if needed
         if ! command -v "${PYTHON_CMD}" &> /dev/null; then
-            read -p "Python3 is not installed. Attempt to install ${PYTHON_CMD} via apt-get? [y/n] " install_python
-            if [[ "$install_python" == "y" ]]; then
-                printf "Installing ${PYTHON_CMD} via apt-get...\n"
+            prompt_yn "Python3 is not installed. Attempt to install ${PYTHON_CMD} via apt-get?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Installing ${PYTHON_CMD} via apt-get..."
                 (
 		sudo apt-get -y update
                 sudo apt-get -y install ${PYTHON_CMD}
-	        ) | while read -r LINE; do echo "[${PYTHON_CMD} install] $LINE"; done
+	        ) | while read -r LINE; do custom_qualifer "${PYTHON_CMD} install" "$LINE"; done
             fi
         fi
 	# >> install pip if needed
 	if ! "${PYTHON_CMD}" -m pip --help &> /dev/null; then
-	    read -p "Pip is not installed. Attempt to install pip via apt-get? [y/n] " install_pip
-	    if [[ "$install_pip" == "y" ]]; then
-                printf "Installing pip via apt-get...\n"
+	    prompt_yn "Pip is not installed. Attempt to install pip via apt-get?"
+	    if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Installing pip via apt-get..."
 		(
 		sudo apt-get -y update
 		sudo apt-get -y install ${PYTHON_CMD}-pip
-	        ) | while read -r LINE; do echo "[${PYTHON_CMD}-pip install] $LINE"; done 
+	        ) | while read -r LINE; do custom_qualifer "${PYTHON_CMD}-pip install" "$LINE"; done 
 	    fi
 	fi
 	# >> install venv if needed
         if [[ "$PYTHON_ENVIRONMENT_TYPE" == "pip" ]] && ( ( [[ "$SYSTEM_SUBTYPE" == "GNU/Linux" ]] && ! command -v "${PYTHON_CMD}-venv" &> /dev/null ) || ( ! "${PYTHON_CMD}" -m venv --help &> /dev/null) ) ; then
-            read -p "Venv is not installed. Attempt to install venv via apt-get? [y/n] " install_venv
-	    if [[ "$install_venv" == "y" ]]; then
-                printf "Installing venv via apt-get...\n"
+            prompt_yn "Venv is not installed. Attempt to install venv via apt-get?"
+	    if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Installing venv via apt-get..."
 		(
 		sudo apt-get -y update
 		sudo apt-get -y install ${PYTHON_CMD}-venv
-	        ) | while read -r LINE; do echo "[${PYTHON_CMD}-venv install] $LINE"; done
+	        ) | while read -r LINE; do custom_qualifer "${PYTHON_CMD}-venv install" "$LINE"; done
 	    fi
         fi
         # >> install conda if needed
 	if [[ "$PYTHON_ENVIRONMENT_TYPE" == "conda" ]] && ! command -v "${CONDA_CMD}" &> /dev/null; then
-            read -p "Conda is not installed. Attempt to install conda via homebrew? [y/n] " install_conda
-            if [[ "$install_conda" == "y" ]]; then
-                printf "Installing conda via homebrew...\n"
+            prompt_yn "Conda is not installed. Attempt to install conda via homebrew?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Installing conda via homebrew..."
                 $BREW_CMD install --cask miniconda 
             fi
         fi 
     elif [[ $PYTHON_INSTALL_METHOD == "module" ]]; then
         # >> check that conda is not requested
         if [[ "$PYTHON_ENVIRONMENT_TYPE" == "conda" ]]; then
-            printf "Conda environment requested, but module-based python loading does not support conda environments. Please modify setup.sh to specify a different environment type.\n"
-            exit 1
+            error "Conda environment requested, but module-based python loading does not support conda environments. Please modify setup.sh to specify a different environment type."
         fi
         # >> test main package modules
         if ! module avail ${MAIN_PACKAGE_MODULES} &> /dev/null; then
-            printf "Failed to load main package modules '%s'. Please check that these are correct for your system and modify setup.sh if needed.\n" "${MAIN_PACKAGE_MODULES}"
-            exit 1
+            error "Failed to load main package modules \"${MAIN_PACKAGE_MODULES}\". Please check that these are correct for your system and modify setup.sh if needed."
         fi
         ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }module purge; module load ${MAIN_PACKAGE_MODULES};"
     else
-        printf "Unknown python installation method '%s'. Please modify setup.sh to specify how you want to install or load python.\n" "$PYTHON_INSTALL_METHOD"
-        exit 1
+        error "Unknown python installation method \"${PYTHON_INSTALL_METHOD}\". Please modify setup.sh to specify how you want to install or load python."
     fi
 
     ### > make/load python environment
     if [[ "$PYTHON_ENVIRONMENT_TYPE" == "conda" ]]; then
         # >> check if there is already a conda environment with the same name, and use it if so, otherwise create a new one
         if $CONDA_CMD env list | grep -qE "^\s*${PYTHON_ENVIRONMENT_NAME}\s"; then
-            printf "Conda environment '%s' already exists. Activating it...\n" "$PYTHON_ENVIRONMENT_NAME"
+            info "Conda environment \"${PYTHON_ENVIRONMENT_NAME}\" already exists. Activating it..."
         else
-            printf "Creating conda environment named '%s' ...\n" "$PYTHON_ENVIRONMENT_NAME"
+            info "Creating conda environment named \"${PYTHON_ENVIRONMENT_NAME}\" ..."
 	    $CONDA_CMD create -n "$PYTHON_ENVIRONMENT_NAME" python -y | while read -r LINE; do echo "[conda environment creation] $LINE"; done
         fi
         # source conda's shell hook so that `conda activate` works (it's a shell function, not a binary command)
         source "$($CONDA_CMD info --base)/etc/profile.d/conda.sh"
         while [[ "${CONDA_SHLVL:-0}" -gt 0 ]]; do conda deactivate; done # deactivate any existing conda envs first so activate puts the env at the front of PATH
-        conda activate "$PYTHON_ENVIRONMENT_NAME" || { printf "Failed to activate conda environment '%s'.\n" "$PYTHON_ENVIRONMENT_NAME"; exit 1; }
+        conda activate "$PYTHON_ENVIRONMENT_NAME" || { error "Failed to activate conda environment \"${PYTHON_ENVIRONMENT_NAME}\"."; }
         ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }"'source "'"$($CONDA_CMD info --base)/etc/profile.d/conda.sh"'";'" conda activate ${PYTHON_ENVIRONMENT_NAME};"
     elif [[ "$PYTHON_ENVIRONMENT_TYPE" == "pip" ]]; then
         # >> check if there is already a pip environment, and use it if so, otherwise create a new one
 	if [[ -f ".${PYTHON_ENVIRONMENT_NAME}/bin/activate" ]]; then
-            printf "Pip environment '%s' already exists. Activating it...\n" ".${PYTHON_ENVIRONMENT_NAME}"
+            info "Pip environment \"${PYTHON_ENVIRONMENT_NAME}\" already exists. Activating it..."
         else
-            printf "Creating pip environment at '%s' ...\n" ".${PYTHON_ENVIRONMENT_NAME}"
-            ( yes | $PYTHON_CMD -m venv ".${PYTHON_ENVIRONMENT_NAME}" ) | while read -r LINE; do echo "[pip environment creation] $LINE"; done
+            info "Creating pip environment at \"${PYTHON_ENVIRONMENT_NAME}\" ..."
+            ( yes | $PYTHON_CMD -m venv ".${PYTHON_ENVIRONMENT_NAME}" ) | while read -r LINE; do custom_qualifer "pip environment creation" "$LINE"; done
         fi
         source ".${PYTHON_ENVIRONMENT_NAME}/bin/activate"
         ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }"'source "'"$REPO_LOCATION/.${PYTHON_ENVIRONMENT_NAME}/bin/activate"'";'
     else
-        printf "Unknown environment type '%s'. Please modify setup.sh to specify a valid environment type.\n" "$PYTHON_ENVIRONMENT_TYPE"
-        exit 1
+        error "Unknown environment type \"${PYTHON_ENVIRONMENT_TYPE}\". Please modify setup.sh to specify a valid environment type."
     fi
 
     ### > install python module
-    printf "Installing jaba as a module to python ${PYTHON_ENVIRONMENT_TYPE} environment ${PYTHON_ENVIRONMENT_NAME} ...\n"
+    info "Installing jaba as a module to python ${PYTHON_ENVIRONMENT_TYPE} environment ${PYTHON_ENVIRONMENT_NAME} ..."
     (
     yes | $PYTHON_CMD -m pip install --upgrade pip
     yes | $PYTHON_CMD -m pip install -e . # note that you should install this to an environment you like
-    ) | while read -r LINE; do echo "[jabapy install] $LINE"; done
+    ) | while read -r LINE; do custom_qualifer "jabapy install" "$LINE"; done
 
     ### > deactivate environment
     if [[ "$PYTHON_ENVIRONMENT_TYPE" == "conda" ]]; then
@@ -417,20 +418,19 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
     fi
 
     ### > setup jaba settings in bashrc 
-    printf "\nSetting up jaba variables and aliases in %s ...\n" "$BASHRC_FILE"
+    info "Setting up jaba variables and aliases in $BASHRC_FILE ..."
     if [[ -f "$BASHRC_TEMP_FILE" ]]; then
-        printf "Temp file %s already exists, likely left over from a previous failed installation. " "$BASHRC_TEMP_FILE"
-	read -p "Would you like to remove it? [y/n]" remove_tmp_bashrc
-	if [[ "$remove_tmp_bashrc" == "y" ]]; then
-	    printf "Okay, removing temporary file.\n"
-            rm "$BASHRC_TEMP_FILE"
+        info "Temp file ${BASHRC_TEMP_FILE} already exists, likely left over from a previous failed installation."
+	prompt_yn "Would you like to remove it?"
+	if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+	    info "Okay, removing temporary file."
+            rm -f "${BASHRC_TEMP_FILE}"
 	else
-            printf "Please check and remove ${BASHRC_TEMP_FILE} manually before proceeding with installation/reinstallation.\n"
-            exit 1
+            error "Please check and remove ${BASHRC_TEMP_FILE} manually before proceeding with installation/reinstallation."
 	fi
     fi
     
-    rsync -ac "$BASHRC_FILE" "$BASHRC_TEMP_FILE" > /dev/null || { printf "Failed to create temporary copy of bashrc file.\n"; exit 1; }
+    rsync -ac "$BASHRC_FILE" "$BASHRC_TEMP_FILE" > /dev/null || { error "Failed to create temporary copy of bashrc file."; }
     remove_block_between_markers "$BASHRC_TEMP_FILE" "$JABA_VARIABLES_STRING" "$JABA_VARIABLES_ENDSTRING" || exit 1
     {
         printf "${JABA_VARIABLES_STRING}\n"
@@ -474,15 +474,15 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             printf "alias qcsq='$SCHEDULER_CMD $QCSSH_FILE'\n"
         fi
 
-        read -p "Also add extra script aliases? [y/n] " add_jaba_general_aliases
-        if [[ "$add_jaba_general_aliases" == "y" ]]; then
+        prompt_yn "Also add extra script aliases?"
+        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
             printf "\n#jaba extra script aliases\n"
             printf "alias sxh='${REPO_LOCATION}/scripts/sxh.sh'\n"
             printf "alias setup-ssh='${REPO_LOCATION}/scripts/setup_ssh.sh'\n"
         fi
 
-        read -p "Also add jaba development aliases? [y/n] " add_jaba_dev_aliases
-        if [[ "$add_jaba_dev_aliases" == "y" ]]; then
+        prompt_yn "Also add jaba development aliases?"
+        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
             printf "\n#jaba development aliases\n"
             printf "alias jaba-cd=\"cd ${REPO_LOCATION}\"\n"
             printf "alias jaba-scripts-cd=\"cd ${REPO_LOCATION}/scripts\"\n"
@@ -503,8 +503,8 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         fi
 
         NON_JABA_SETTINGS_INSTALL=0
-        read -p "Also add Jaeden's other (non-jaba) general aliases? [y/n] " add_general_aliases
-        if [[ "$add_general_aliases" == "y" ]]; then
+        prompt_yn "Also add Jaeden's other (non-jaba) general settings?"
+        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
             NON_JABA_SETTINGS_INSTALL=1
             printf "\n#non-jaba general aliases\n"
             printf "alias ss='source ${BASHRC_FILE}'\n"
@@ -517,6 +517,8 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             printf "CLICOLOR=1\n"
             printf "export LSCOLORS=exfxcxdxcxegedabagaced\n"
             printf "alias ls='ls -G --color=auto'\n"
+            #for tmux stuff
+            printf "export TERM=xterm-256color\n"
         fi
 
         printf "${JABA_VARIABLES_ENDSTRING}\n"
@@ -525,30 +527,30 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
     
     FILE_DIFFERENCE=$(diff -u "$BASHRC_FILE" "$BASHRC_TEMP_FILE")
     if [[ ! -z "$FILE_DIFFERENCE" ]]; then
-        printf "\nProposed changes to %s:\n" "$BASHRC_FILE"
+        info "Proposed changes to ${BASHRC_FILE}:"
         diff --color -u "$BASHRC_FILE" "$BASHRC_TEMP_FILE"
-	    read -p "Should I make the above changes to your .bashrc? [y/n] " confirm_bashrc
-        if [[ "$confirm_bashrc" == "y" ]]; then
+	    prompt_yn "Should I make the above changes to your .bashrc?"
+        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
             mv -v "$BASHRC_TEMP_FILE" "$BASHRC_FILE" > /dev/null 
         else
-            read -p "Okay, I will abort the bashrc changes and end the program. Should I keep a backup of the proposed changes for you to look at? [y/n] " keep_bashrc_changes
-            if [[ "$keep_bashrc_changes" == "y" ]]; then
-                printf "Keeping proposed changes at %s.\n" "$BASHRC_TEMP_FILE"
+            prompt_yn "Okay, I will abort the bashrc changes and end the program. Should I keep a backup of the proposed changes for you to look at?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Keeping proposed changes at ${BASHRC_TEMP_FILE}."
             else
-                rm "$BASHRC_TEMP_FILE" # remove temp file
+                rm -f "${BASHRC_TEMP_FILE}" # remove temp file
             fi
             exit 0
         fi
     else
-        printf "No changes were made to the .bashrc file. Removing temporary file...\n"
-        rm "$BASHRC_TEMP_FILE"
+        info "No changes were made to the .bashrc file."
+        rm -f "${BASHRC_TEMP_FILE}"
     fi
 
     # Also install my ~/.vimrc settings
     if [ "$NON_JABA_SETTINGS_INSTALL" -eq 1 ]; then
-        read -p "Should I also install Jaeden's vimrc settings? [y/n] " confirm_bashrc
-        printf "Installing ~/.vimrc settings...\n"
-        rsync -ac "$VIMRC_FILE" "$VIMRC_TEMP_FILE" > /dev/null || { printf "Failed to create temporary copy of vimrc file.\n"; exit 1; }
+        prompt_yn "Should I also install Jaeden's vimrc settings?"
+        info "Attempting to install ~/.vimrc settings..."
+        rsync -ac "$VIMRC_FILE" "$VIMRC_TEMP_FILE" > /dev/null || { error "Failed to create temporary copy of vimrc file."; }
         remove_block_between_markers "$VIMRC_TEMP_FILE" "$JABA_VARIABLES_STRING_VIM" "$JABA_VARIABLES_ENDSTRING_VIM" || exit 1
         {
             printf "${JABA_VARIABLES_STRING_VIM}\n"
@@ -561,60 +563,79 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         } >> "${VIMRC_TEMP_FILE}"
         FILE_DIFFERENCE=$(diff -u "$VIMRC_FILE" "$VIMRC_TEMP_FILE")
         if [[ ! -z "$FILE_DIFFERENCE" ]]; then
-            printf "\nProposed changes to %s:\n" "$VIMRC_FILE"
+            info "Proposed changes to ${VIMRC_FILE}:"
             diff --color -u "$VIMRC_FILE" "$VIMRC_TEMP_FILE"
-            read -p "Should I make the above changes to your .vimrc? [y/n] " confirm_vimrc
-            if [[ "$confirm_vimrc" == "y" ]]; then
+            prompt_yn "Should I make the above changes to your .vimrc?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
                 mv -v "$VIMRC_TEMP_FILE" "$VIMRC_FILE" > /dev/null 
             else
-                read -p "Okay, I will abort the vimrc changes and end the program. Should I keep a backup of the proposed changes for you to look at? [y/n] " keep_vimrc_changes
-                if [[ "$keep_vimrc_changes" == "y" ]]; then
-                    printf "Keeping proposed changes at %s.\n" "$VIMRC_TEMP_FILE"
+                prompt_yn "Okay, I will abort the vimrc changes and end the program. Should I keep a backup of the proposed changes for you to look at?"
+                if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                    info "Keeping proposed changes at ${VIMRC_TEMP_FILE}."
                 else
-                    rm "$VIMRC_TEMP_FILE" # remove temp file
+                    rm -f "${VIMRC_TEMP_FILE}" # remove temp file
                 fi
                 exit 0
             fi
         else
-            printf "No changes were made to the .vimrc file. Removing temporary file...\n"
-            rm "$VIMRC_TEMP_FILE"
+            info "No changes were made to the .vimrc file."
+            rm -f "${VIMRC_TEMP_FILE}"
         fi
     fi
 fi
 
-printf "\n"
 ##############################
 ### setup git submodules
-read -p "Set up submodules? [y/n] " setup_submodules
-if [[ "$setup_submodules" == "y" ]]; then
-    printf "Setting up git submodules...\n"
+prompt_yn "Set up submodules?"
+if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+    info "Setting up git submodules..."
     git submodule update --init --recursive
     git config --global push.recurseSubmodules on-demand
     git config --global submodule.recurse true
 
     ### > setup GIZ
-    read -p "Set up GIZ? [y/n] " setup_giz
-    if [[ "$setup_giz" == "y" ]]; then
-        printf "Setting up GIZ submodule...\n"
+    prompt_yn "Set up GIZ?"
+    if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+        info "Setting up GIZ submodule..."
         (
             cd scripts/giz
             git checkout main
             bash setup.sh || exit 1
         )
     else
-        printf "Skipping GIZ setup.\n"
+        info "Skipping GIZ setup."
     fi
 
     ### > setup SKI
-    ### ...
+    prompt_yn "Set up SKI?"
+    if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+        info "Setting up SKI submodule..."
+        (
+            cd scripts/ski
+            git checkout main
+            bash setup.sh || exit 1
+        )
+    else
+        info "Skipping SKI setup."
+    fi
 
-    ### > setup ...
-    ### ...
+    ### > setup CLD
+    prompt_yn "Set up CLD?"
+    if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+        info "Setting up CLD submodule..."
+        (
+            cd scripts/cld
+            git checkout main
+            bash setup.sh || exit 1
+        )
+    else
+        info "Skipping CLD setup."
+    fi
 
 else
-    printf "Skipping git submodule setup.\n"
+    info "Skipping git submodule setup."
 fi
 ##############################
 
-printf "Setup complete.\n"
+info "Setup complete."
 exit 0
