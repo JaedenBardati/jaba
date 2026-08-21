@@ -410,7 +410,7 @@ if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
 
         prompt_yn "Do you want to test your github SSH connection now?"
         if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
-            ssh -T git@github.com && break || warn "Something went wrong with the github SSH connection test. You may not have copied the public key correctly. Let's try again"
+            ssh -T git@github.com 2>&1 | grep -q "successfully authenticated" && break || warn "Something went wrong with the github SSH connection test. You may not have copied the public key correctly. Let's try again."
         fi
     done
     info "Successfully set up your github SSH keys."
