@@ -488,13 +488,13 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
     info "Setting up jaba variables and aliases in $BASHRC_FILE ..."
     if [[ -f "$BASHRC_TEMP_FILE" ]]; then
         info "Temp file ${BASHRC_TEMP_FILE} already exists, likely left over from a previous failed installation."
-	prompt_yn "Would you like to remove it?"
-	if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
-	    info "Okay, removing temporary file."
-            rm -f "${BASHRC_TEMP_FILE}"
-	else
-            error "Please check and remove ${BASHRC_TEMP_FILE} manually before proceeding with installation/reinstallation."
-	fi
+        prompt_yn "Would you like to remove it?"
+        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+            info "Okay, removing temporary file."
+                rm -f "${BASHRC_TEMP_FILE}"
+        else
+                error "Please check and remove ${BASHRC_TEMP_FILE} manually before proceeding with installation/reinstallation."
+        fi
     fi
     
     cp "$BASHRC_FILE" "$BASHRC_TEMP_FILE" > /dev/null || { error "Failed to create temporary copy of bashrc file."; }
@@ -616,7 +616,21 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
     # Also install my ~/.vimrc settings
     if [ "$NON_JABA_SETTINGS_INSTALL" -eq 1 ]; then
         prompt_yn "Should I also install Jaeden's vimrc settings?"
-        info "Attempting to install ~/.vimrc settings..."
+        info "Setting up vim settings in ${VIMRC_FILE}..."
+        if [[ -f "$VIMRC_TEMP_FILE" ]]; then
+            info "Temp file ${VIMRC_TEMP_FILE} already exists, likely left over from a previous failed installation."
+            prompt_yn "Would you like to remove it?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Okay, removing temporary file."
+                    rm -f "${VIMRC_TEMP_FILE}"
+            else
+                    error "Please check and remove ${VIMRC_TEMP_FILE} manually before proceeding with installation/reinstallation."
+            fi
+        fi
+        if [[ ! -e "$VIMRC_FILE" ]]; then
+            info "Creating ${VIMRC_FILE} (it did not exist)."
+            touch "$VIMRC_FILE" || { error "Failed to create ${VIMRC_FILE}"; }
+        fi
         cp "$VIMRC_FILE" "$VIMRC_TEMP_FILE" > /dev/null || { error "Failed to create temporary copy of vimrc file."; }
         remove_block_between_markers "$VIMRC_TEMP_FILE" "$JABA_VARIABLES_STRING_VIM" "$JABA_VARIABLES_ENDSTRING_VIM" || exit 1
         {
