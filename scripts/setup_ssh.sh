@@ -2,7 +2,7 @@
 # This script will help you setup SSH (e.g., SSH keys, server nicknames).
 # Jaeden Bardati 2026 (jbardati@caltech.edu)
 
-YOUR_SSH_DIR="~/.ssh"
+YOUR_SSH_DIR="$HOME/.ssh"
 PUBLIC_KEY=""
 PRIVATE_KEY=""
 
