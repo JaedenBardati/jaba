@@ -2,7 +2,7 @@
 # This script will help you setup SSH (e.g., SSH keys, server nicknames).
 # Jaeden Bardati 2026 (jbardati@caltech.edu)
 
-YOUR_SSH_DIR="~/.ssh/"
+YOUR_SSH_DIR="~/.ssh"
 PUBLIC_KEY=""
 PRIVATE_KEY=""
 
@@ -59,7 +59,7 @@ get_keys() {
             prompt "Please enter a key name that you would like to make (default is ${_DEFAULT_KEY_NAME})" _KEY_NAME ;
             [[ -z "$(printf '%s' "$_KEY_NAME" | tr -d '[[:space:]]')" ]] && _KEY_NAME="${_DEFAULT_KEY_NAME}"
 
-            local _DEFAULT_KEY_COMMENT="$(whoami)@$(hostname)"
+            local _DEFAULT_KEY_COMMENT="$(whoami)@$(hostname -f)"
             prompt "Please enter a key comment that you would like to make (default is ${_DEFAULT_KEY_COMMENT})" _KEY_COMMENT ;
             [[ -z "$(printf '%s' "$_KEY_COMMENT" | tr -d '[[:space:]]')" ]] && _KEY_COMMENT="${_DEFAULT_KEY_COMMENT}"
             
@@ -393,7 +393,7 @@ if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
         if [[ "${TRY_GH}" == "1" ]] && command -v gh >/dev/null 2>&1; then
             info "Using gh to set up your key on github."
             gh auth login || { warn "It seems like gh auth failed. You will have to manually set up your public key."; TRY_GH=0; break; }
-            gh ssh-key add "${PUBLIC_KEY}" --title "$(whoami)@$(hostname)" || { warn "It seems like gh ssh-key add failed. You will have to manually set up your public key."; TRY_GH=0; break; }
+            gh ssh-key add "${PUBLIC_KEY}" --title "$(whoami)@$(hostname -f)" || { warn "It seems like gh ssh-key add failed. You will have to manually set up your public key."; TRY_GH=0; break; }
         else
             info "Since gh is not installed, you will have to set up your key manually with a web browser."
             info "Here are the contents of your public key:"

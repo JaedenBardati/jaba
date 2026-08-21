@@ -77,25 +77,31 @@ if [[ "$SYSTEM_TYPE" == "Linux" && "$SCHEDULER_CMD" != "" ]]; then
     INFERRED_SYSTEM="General Linux Server"
 fi
 
-### infer host, override variables as needed (CHANGE THIS IF YOU HAVE AN UNRECOGNIZED SYSTEM TYPE OR NEED PERSONAL DEFAULTS)
-HOSTNAME="$(hostname)"
+### infer host, override variables as needed
+HOSTNAME="$(hostname -f)"
 if [[ "$HOSTNAME" == *"frontera"* && "$SYSTEM_TYPE" == "Linux" && "$SCHEDULER_CMD" == "sbatch" ]]; then
     info "I think you are on Frontera. Resetting parameters accordingly."
     INFERRED_SYSTEM="Frontera"
     SRUN_CMD="ibrun"
-    MAIN_PACKAGE_MODULES="intel/19.1.1 mvapich2-x/2.3 python3/3.7.0 phdf5/1.10.4"
+    MAIN_PACKAGE_MODULE_LOAD_COMMANDS="module purge; module load intel/19.1.1 mvapich2-x/2.3 python3/3.7.0 phdf5/1.10.4;"
 elif [[ "$HOSTNAME" == "Jaedens-MacBook-Pro.local" && "$SYSTEM_TYPE" == "Darwin" && "$SCHEDULER_CMD" == "" ]]; then
     info "I think you are on Jaeden's MacBook Pro. Resetting parameters accordingly."
     INFERRED_SYSTEM="Jaedens MacBook"
     PYTHON_ENVIRONMENT_TYPE="conda"
-#...
+elif [[ "$HOSTNAME" == *"frontier" && "$SYSTEM_TYPE" == "Linux" && "$SCHEDULER_CMD" == "sbatch" ]]; then
+    info "I think you are on Frontier. Resetting parameters accordingly."
+    INFERRED_SYSTEM="Frontier"
+    MAIN_PACKAGE_MODULE_LOAD_COMMANDS="module reset; module swap PrgEnv-cray PrgEnv-gnu; module load cray-mpich cray-python cray-hdf5;"
+
+# ADD A NEW CONDITION STATEMENT HERE IF YOU HAVE AN UNRECOGNIZED SYSTEM TYPE OR NEED PERSONAL DEFAULTS ...
+
 else
     info "I don't recognize your host '$HOSTNAME'." 
     if [[ $SCHEDULER_CMD == "" ]]; then
         info "Since you don't appear to be on a cluster, I'll try setting up everything up using the defaults for your machine type."
     else
         warn "Yet you appear to be on a cluster... I'll try using some defaults, but I would highly suggest modifying jaba's setup.sh to add the relevant modules."
-        MAIN_PACKAGE_MODULES="intel impi ${PYTHON_CMD}"
+        MAIN_PACKAGE_MODULE_LOAD_COMMANDS="module reset; module load python hdf5;"
     fi
 fi
 
@@ -401,10 +407,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             error "Conda environment requested, but module-based python loading does not support conda environments. Please modify setup.sh to specify a different environment type."
         fi
         # >> test main package modules
-        if ! module avail ${MAIN_PACKAGE_MODULES} &> /dev/null; then
-            error "Failed to load main package modules \"${MAIN_PACKAGE_MODULES}\". Please check that these are correct for your system and modify setup.sh if needed."
-        fi
-        ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }module purge; module load ${MAIN_PACKAGE_MODULES};"
+        ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }${MAIN_PACKAGE_MODULE_LOAD_COMMANDS};"
     else
         error "Unknown python installation method \"${PYTHON_INSTALL_METHOD}\". Please modify setup.sh to specify how you want to install or load python."
     fi
@@ -430,9 +433,9 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         prompt_yn "Do you want to set up Github SSH keys for this system? (recommended for pushing to GitHub)"
         if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
             info "Okay, I'll launch a generic script to set up SSH keys. Many of the prompts may be irrelevant for your use case."
-            printf "--------------------------------\n"
+            printf "%s\n" "--------------------------------"
             /bin/bash "$REPO_LOCATION/scripts/setup_ssh.sh" </dev/tty || { error "Failed to set up Github SSH keys."; }
-            printf "--------------------------------\n"
+            printf "%s\n" "--------------------------------"
             info "Done setting up Github SSH keys."
         fi
     fi
