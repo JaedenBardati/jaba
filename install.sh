@@ -407,7 +407,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             error "Conda environment requested, but module-based python loading does not support conda environments. Please modify setup.sh to specify a different environment type."
         fi
         # >> test main package modules
-        ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }${}"
+        ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }${MAIN_PACKAGE_MODULE_LOAD_COMMANDS}"
     else
         error "Unknown python installation method \"${PYTHON_INSTALL_METHOD}\". Please modify setup.sh to specify how you want to install or load python."
     fi
