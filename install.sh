@@ -88,7 +88,7 @@ elif [[ "$HOSTNAME" == "Jaedens-MacBook-Pro.local" && "$SYSTEM_TYPE" == "Darwin"
     info "I think you are on Jaeden's MacBook Pro. Resetting parameters accordingly."
     INFERRED_SYSTEM="Jaedens MacBook"
     PYTHON_ENVIRONMENT_TYPE="conda"
-elif [[ "$HOSTNAME" == *"frontier" && "$SYSTEM_TYPE" == "Linux" && "$SCHEDULER_CMD" == "sbatch" ]]; then
+elif [[ "$HOSTNAME" == *"frontier"* && "$SYSTEM_TYPE" == "Linux" && "$SCHEDULER_CMD" == "sbatch" ]]; then
     info "I think you are on Frontier. Resetting parameters accordingly."
     INFERRED_SYSTEM="Frontier"
     MAIN_PACKAGE_MODULE_LOAD_COMMANDS="module reset; module swap PrgEnv-cray PrgEnv-gnu; module load cray-mpich cray-python cray-hdf5;"
