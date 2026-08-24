@@ -408,6 +408,8 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         fi
         # >> test main package modules
         ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS="${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS}${ACTIVATE_PYTHON_ENVIRONMENT_COMMANDS:+ }${MAIN_PACKAGE_MODULE_LOAD_COMMANDS}"
+        eval $MAIN_PACKAGE_MODULE_LOAD_COMMANDS || error "Could not load modules desired";
+        info "Current python version is $(python --version)"
     else
         error "Unknown python installation method \"${PYTHON_INSTALL_METHOD}\". Please modify setup.sh to specify how you want to install or load python."
     fi
