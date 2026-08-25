@@ -123,12 +123,9 @@ info ".... JABA INSTALLATION ...."
 ##############################
 # defaults
 BASHRC_FILE="$HOME/.bashrc"  # only use bashrc for simplicity, even if on mac, but then redirect bash_profile/zshrc to source bashrc
-BASHRC_TEMP_FILE="${BASHRC_FILE}.tmp"
+VIMRC_FILE="$HOME/.vimrc"
 PYENVSH_FILE="$REPO_LOCATION/scripts/pyenv.sh"
 QCSSH_FILE="$REPO_LOCATION/scripts/qcs.sh"
-
-VIMRC_FILE="$HOME/.vimrc"
-VIMRC_TEMP_FILE="${VIMRC_FILE}.tmp"
 
 PYTHON_CMD="python3"
 BREW_CMD="brew"
@@ -641,7 +638,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         fi
 
         printf "${JABA_VARIABLES_ENDSTRING}\n"
-    } >> "${BASHRC_TEMP_FILE}"
+    } >> "${BASHRC_FILE}.tmp"
     merge_block_back_in_temp_file "$BASHRC_FILE" "$JABA_VARIABLES_STRING" "$JABA_VARIABLES_ENDSTRING" || exit 1
 
     # Also install my ~/.vimrc settings
@@ -657,7 +654,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             printf "set mouse=a\n"
             printf "set ttymouse=sgr\n"
             printf "${JABA_VARIABLES_ENDSTRING_VIM}\n"
-        } >> "${VIMRC_TEMP_FILE}"
+        } >> "${VIMRC_FILE}.tmp"
         merge_block_back_in_temp_file "$VIMRC_FILE" "$JABA_VARIABLES_STRING_VIM" "$JABA_VARIABLES_ENDSTRING_VIM" || exit 1
     fi
 fi
