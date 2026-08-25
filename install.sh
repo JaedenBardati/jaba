@@ -621,6 +621,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         NON_JABA_SETTINGS_INSTALL=0
         prompt_yn "Also add Jaeden's other (non-jaba) general settings?"
         if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+            # common aliases I keep in bashrc
             NON_JABA_SETTINGS_INSTALL=1
             printf "\n#non-jaba general aliases\n"
             printf "alias ss='source ${BASHRC_FILE}'\n"
@@ -635,6 +636,12 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             printf "alias ls='ls -G --color=auto'\n"
             #for tmux stuff
             printf "export TERM=xterm-256color\n"
+            #start the ssh-agent if on Linux and not already started
+            if [[ "$SYSTEM_TYPE" != "Darwin" ]]; then
+                printf "if [ -z \"\$SSH_AUTH_SOCK\" ] ; then\n"
+                printf "    eval \$(ssh-agent -s)\n"
+                printf "fi\n"
+            fi
         fi
 
         printf "${JABA_VARIABLES_ENDSTRING}\n"

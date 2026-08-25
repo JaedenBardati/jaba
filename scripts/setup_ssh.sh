@@ -409,9 +409,15 @@ if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
         fi
 
         if [[ "Host github.com" != "$(grep -F "Host github.com" "${YOUR_SSH_DIR}/config")" ]]; then
-            prompt_yn "Would you like to add the key to the ssh agent in your config file? (recommended)"
+            prompt_yn "Would you like to add the key to the ssh agent? (recommended)"
             if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
-                info "Adding the key to the ssh agent in your config file."
+                if [ -z "$SSH_AUTH_SOCK" ]; then
+                    info "Starting the ssh agent..."
+                    eval "$(ssh-agent -s)" > /dev/null
+                fi
+                info "Adding the key to the ssh agent now..."
+                ssh-add "${PRIVATE_KEY}" || warn "Could not add the key to the ssh-agent. You will have to do this manually later."
+                info "Adding the key to your ssh config file now..."
                 CONFIG_STR=$(cat <<EOF
 Host github.com
     AddKeysToAgent yes
