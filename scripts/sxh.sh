@@ -5,7 +5,7 @@
 # Jaeden Bardati 2026 (jbardati@caltech.edu)
 
 SERVER="$1"
-TMUX_SESSION_NAME="xsh"
+TMUX_SESSION_NAME="sxh"
 TMUX_WINDOW_NAME="${SERVER}"
 LOCAL_HOSTNAME="$(hostname -f)"
 
@@ -68,9 +68,9 @@ if [ ${CURRENT_NPANES} -le 1 ]; then
     info "Setting up the desired pane structure..."
 
     # make splits
-    tmux split-window -h -p 62 -t "${TMUX_SESSION_NAME}:${TMUX_WINDOW_NAME}"
+    tmux split-window -h -l 62% -t "${TMUX_SESSION_NAME}:${TMUX_WINDOW_NAME}"
     tmux select-pane -t "${TMUX_SESSION_NAME}:${TMUX_WINDOW_NAME}.0"
-    tmux split-window -v -p 38 -t "${TMUX_SESSION_NAME}:${TMUX_WINDOW_NAME}.0"
+    tmux split-window -v -l 38% -t "${TMUX_SESSION_NAME}:${TMUX_WINDOW_NAME}.0"
 
     # name them
     tmux set-option -t "${TMUX_SESSION_NAME}" pane-border-status top
@@ -121,15 +121,18 @@ tmux attach-session -t "${TMUX_SESSION_NAME}" \; select-window -t "${TMUX_WINDOW
 # fi
 
 # remove session or window if desired
-prompt_yn "Would you like to remove to the whole session (and all windows)?" YN;
+prompt_yn "Would you like to remove this window?" YN
 if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
-    tmux list-panes -a -s -F '#{pane_id}' | xargs -I {} sh -c '
+    tmux respawn-pane -k -t :.
+    tmux kill-window -t "${TMUX_SESSION_NAME}:${TMUX_WINDOW_NAME}"
+
+    if tmux ls >/dev/null 2>&1; then
+        prompt_yn "Would you like to remove to the whole session (and all windows)?" YN;
+        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+            tmux list-panes -a -s -F '#{pane_id}' | xargs -I {} sh -c '
     tmux send-keys -t "$1" C-c Enter "exit" Enter
-' _ {} && tmux kill-session -t "${TMUX_SESSION_NAME}"
-else
-    prompt_yn "Would you like to remove the window only?" YN
-    if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
-        tmux respawn-pane -k -y -t :. \; tmux kill-window -t "${TMUX_SESSION_NAME}:${TMUX_WINDOW_NAME}"
+    ' _ {} && tmux kill-session -t "${TMUX_SESSION_NAME}"
+        fi
     fi
 fi
 
