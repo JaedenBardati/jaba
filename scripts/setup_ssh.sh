@@ -415,14 +415,22 @@ if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
                 CONFIG_STR=$(cat <<EOF
 Host github.com
     AddKeysToAgent yes
-    UseKeychain yes
+EOF
+                )
+                if [[ "$(uname)" == "Darwin" ]]; then
+                    prompt_yn "Do you want to use the keychain to store the key? (recommended for macOS)"
+                    if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                        CONFIG_STR="${CONFIG_STR}
+    UseKeychain yes"
+                    fi
+                fi
+                CONFIG_STR=${CONFIG_STR}$(cat <<EOF
     IdentityFile ${PUBLIC_KEY}
     IdentitiesOnly yes
+
 EOF
-        )
-        CONFIG_STR="${CONFIG_STR}
-"
-        echo "$CONFIG_STR" >> "${YOUR_SSH_DIR}/config"
+                )
+                echo "$CONFIG_STR" >> "${YOUR_SSH_DIR}/config"
             fi
         fi
 
