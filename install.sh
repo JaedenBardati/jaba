@@ -199,7 +199,7 @@ elif [[ "$HOSTNAME" == *"frontier"* && "$SYSTEM_TYPE" == "Linux" && "$SCHEDULER_
     info "I think you are on Frontier. Resetting parameters accordingly."
     INFERRED_SYSTEM="Frontier"
     SRUN_CMD="srun"
-    MAIN_PACKAGE_MODULE_LOAD_COMMANDS="module reset > /dev/null; module swap PrgEnv-cray PrgEnv-gnu > /dev/null; module load cray-mpich cray-python cray-hdf5 > /dev/null;"
+    MAIN_PACKAGE_MODULE_LOAD_COMMANDS="module --quiet reset; module --quiet swap PrgEnv-cray PrgEnv-gnu; module --quiet load cray-mpich cray-python cray-hdf5;"
 
 # ADD A NEW CONDITION STATEMENT HERE IF YOU HAVE AN UNRECOGNIZED SYSTEM TYPE OR NEED PERSONAL DEFAULTS ...
 
