@@ -408,6 +408,24 @@ if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
             prompt "Press enter when you have completed this..." DUMMY
         fi
 
+        if [[ "Host github.com" != "$(grep -F "Host github.com" "${YOUR_SSH_DIR}/config")" ]]; then
+            prompt_yn "Would you like to add the key to the ssh agent in your config file? (recommended)"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Adding the key to the ssh agent in your config file."
+                CONFIG_STR=$(cat <<EOF
+Host github.com
+    AddKeysToAgent yes
+    UseKeychain yes
+    IdentityFile ${PUBLIC_KEY}
+    IdentitiesOnly yes
+EOF
+        )
+        CONFIG_STR="${CONFIG_STR}
+"
+        echo "$CONFIG_STR" >> "${YOUR_SSH_DIR}/config"
+            fi
+        fi
+
         prompt_yn "Do you want to test your github SSH connection now?"
         if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
             ssh -T git@github.com 2>&1 | grep -q "successfully authenticated" && break || warn "Something went wrong with the github SSH connection test. You may not have copied the public key correctly. Let's try again."
