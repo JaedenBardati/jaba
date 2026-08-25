@@ -432,9 +432,10 @@ EOF
     
 EOF
                 )
-                CONFIG_STR="${CONFIG_STR}
-"
-                echo "$CONFIG_STR" >> "${YOUR_SSH_DIR}/config"
+                tmp_file=$(mktemp)
+                printf '%s\n' "$CONFIG_STR" > "$tmp_file"
+                cat "${YOUR_SSH_DIR}/config" >> "$tmp_file"
+                mv "$tmp_file" "${YOUR_SSH_DIR}/config"
             fi
         fi
 
