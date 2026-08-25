@@ -199,7 +199,7 @@ elif [[ "$HOSTNAME" == *"frontier"* && "$SYSTEM_TYPE" == "Linux" && "$SCHEDULER_
     info "I think you are on Frontier. Resetting parameters accordingly."
     INFERRED_SYSTEM="Frontier"
     SRUN_CMD="srun"
-    MAIN_PACKAGE_MODULE_LOAD_COMMANDS="module reset; module swap PrgEnv-cray PrgEnv-gnu; module load cray-mpich cray-python cray-hdf5;"
+    MAIN_PACKAGE_MODULE_LOAD_COMMANDS="module reset > /dev/null; module swap PrgEnv-cray PrgEnv-gnu > /dev/null; module load cray-mpich cray-python cray-hdf5 > /dev/null;"
 
 # ADD A NEW CONDITION STATEMENT HERE IF YOU HAVE AN UNRECOGNIZED SYSTEM TYPE OR NEED PERSONAL DEFAULTS ...
 
@@ -657,7 +657,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             #start the ssh-agent if on Linux and not already started
             if [[ "$SYSTEM_TYPE" != "Darwin" ]]; then
                 printf "if [ -z \"\$SSH_AUTH_SOCK\" ] ; then\n"
-                printf "    eval \$(ssh-agent -s)\n"
+                printf "    eval \$(ssh-agent -s > /dev/null)\n"
                 printf "fi\n"
             fi
         fi

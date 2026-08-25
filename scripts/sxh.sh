@@ -16,6 +16,7 @@ error()  { echo -e "\033[1;31m[ERROR]\033[0m $*" >&2; exit 1; }
 prompt() { printf -v p "\033[1;36m[PROMPT]\033[0m ${1}: "; read -p "$p" "$2"; }
 prompt_yn() { prompt "$1 [y/n]" YN; YN=$(echo "$YN" | tr -d ' ' | tr '[:upper:]' '[:lower:]'); } 
 
+eval SXH_FILE_TRANSFER_LOCATION=${SXH_FILE_TRANSFER_LOCATION} # expand any variables in the path
 cd ${SXH_FILE_TRANSFER_LOCATION} || error "Failed to change directory to ${SXH_FILE_TRANSFER_LOCATION}. Please check that this path exists and is accessible."
 
 # basic checks
