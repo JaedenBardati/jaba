@@ -9,6 +9,116 @@ prompt() { printf -v p "\033[1;36m[PROMPT]\033[0m ${1}: "; read -p "$p" "$2"; }
 prompt_yn() { prompt "$1 [y/n]" YN; YN=$(echo "$YN" | tr -d ' ' | tr '[:upper:]' '[:lower:]'); }
 custom_qualifer() { echo -e '\033[38;5;208m['"${1}"']\033[0m '"$2"; } 
 
+remove_block_between_markers() {
+    local target_file="$1"
+    local start_marker="$2"
+    local end_marker="$3"
+
+    if [[ ! -f "${target_file}" ]]; then
+        info "No file found at ${target_file}; nothing to reset."
+        return 1
+    fi
+
+    local tmp_file
+    tmp_file="$(mktemp)"
+
+    awk -v start="$start_marker" -v end="$end_marker" '
+        BEGIN { inblock=0; found_start=0; found_end=0 }
+        $0==start { inblock=1; found_start=1; next }
+        $0==end { if (inblock) { inblock=0; found_end=1; next } }
+        !inblock { print }
+        END {
+            if (found_start && !found_end) exit 2
+            if (!found_start) exit 3
+        }
+    ' "$target_file" > "$tmp_file"
+    local awk_status=$?
+
+    if [[ $awk_status -eq 2 ]]; then
+        info "Found start marker '${start_marker}' but not end marker '${end_marker}' in ${target_file}; refusing to modify."
+        rm -f "$tmp_file"
+        return 1
+    elif [[ $awk_status -eq 3 ]]; then
+        #info "Did not find start marker \"${start_marker}\" in \"${target_file}\"; nothing to remove."
+        rm -f "$tmp_file"
+        return 0
+    elif [[ $awk_status -ne 0 ]]; then
+        info "Failed to process ${target_file} for reset (awk status ${awk_status})."
+        rm -f "$tmp_file"
+        return 1
+    fi
+
+    if ! mv "$tmp_file" "$target_file"; then
+        info "Failed to copy over temporary file ${tmp_file} to target file ${target_file}."
+        rm -f "$tmp_file"
+        return 1
+    fi
+
+    rm -f "$tmp_file"
+    return 0
+}
+
+prepare_temp_file_block () {
+    local target_file="$1"
+    local start_marker="$2"
+    local end_marker="$3"
+
+    local file_name="${target_file##*/}"
+    local temp_file="${target_file}.tmp"
+
+    if [[ -f "${temp_file}" ]]; then
+        info "There is already a temporary ${file_name} file ${temp_file} from a previous setup."
+        prompt_yn "Do you want to delete it and continue with the setup?"
+        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+            info "Okay, removing temporary file."
+            rm -f "${temp_file}"
+        else
+            prompt_yn "Would you like to restore it?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                mv "${temp_file}" "${target_file}"
+                info "Restored ${target_file} from ${temp_file}."
+            else
+                error "Please check and remove ${temp_file} manually before proceeding with giz installation/reinstallation."
+            fi
+        fi
+    fi
+    if [[ ! -e "$temp_file" ]]; then
+        info "Creating ${temp_file} (it did not exist)."
+        touch "$temp_file" || { error "Failed to create ${temp_file}"; }
+    fi
+    cp "$target_file" "$temp_file" > /dev/null || { error "Failed to create temporary copy of ${file_name} file."; }
+    remove_block_between_markers "$temp_file" "$start_marker" "$end_marker" || exit 1
+}
+
+merge_block_back_in_temp_file () {
+    local target_file="$1"
+    local start_marker="$2"
+    local end_marker="$3"
+
+    local file_name="${target_file##*/}"
+    local temp_file="${target_file}.tmp"
+
+    if ! cmp -s "$target_file" "$temp_file"; then
+        info "Proposed changes to ${target_file}:"
+        diff --color -u "$target_file" "$temp_file"
+        prompt_yn "Should I make the above changes to your ${file_name}?"
+        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+            mv -v "$temp_file" "$target_file" > /dev/null 
+        else
+            prompt_yn "Okay, I will abort your ${file_name} changes and end the program. Should I keep a backup of the proposed changes for you to look at?"
+            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                info "Keeping proposed changes at ${temp_file}."
+            else
+                rm -f "${temp_file}" # remove temp file
+            fi
+            exit 0
+        fi
+    else
+        info "No changes were made to your ${file_name}."
+        rm -f "${temp_file}"
+    fi
+}
+
 info ".... JABA INSTALLATION ...."
 ##############################
 # defaults
@@ -91,6 +201,7 @@ elif [[ "$HOSTNAME" == "Jaedens-MacBook-Pro.local" && "$SYSTEM_TYPE" == "Darwin"
 elif [[ "$HOSTNAME" == *"frontier"* && "$SYSTEM_TYPE" == "Linux" && "$SCHEDULER_CMD" == "sbatch" ]]; then
     info "I think you are on Frontier. Resetting parameters accordingly."
     INFERRED_SYSTEM="Frontier"
+    SRUN_CMD="srun"
     MAIN_PACKAGE_MODULE_LOAD_COMMANDS="module reset; module swap PrgEnv-cray PrgEnv-gnu; module load cray-mpich cray-python cray-hdf5;"
 
 # ADD A NEW CONDITION STATEMENT HERE IF YOU HAVE AN UNRECOGNIZED SYSTEM TYPE OR NEED PERSONAL DEFAULTS ...
@@ -175,55 +286,6 @@ fi
 
 ##############################
 ## main setup script
-
-remove_block_between_markers() {
-    local target_file="$1"
-    local start_marker="$2"
-    local end_marker="$3"
-
-    if [[ ! -f "${target_file}" ]]; then
-        info "No file found at ${target_file}; nothing to reset."
-        return 1
-    fi
-
-    local tmp_file
-    tmp_file="$(mktemp)"
-
-    awk -v start="$start_marker" -v end="$end_marker" '
-        BEGIN { inblock=0; found_start=0; found_end=0 }
-        $0==start { inblock=1; found_start=1; next }
-        $0==end { if (inblock) { inblock=0; found_end=1; next } }
-        !inblock { print }
-        END {
-            if (found_start && !found_end) exit 2
-            if (!found_start) exit 3
-        }
-    ' "$target_file" > "$tmp_file"
-    local awk_status=$?
-
-    if [[ $awk_status -eq 2 ]]; then
-        info "Found start marker '${start_marker}' but not end marker '${end_marker}' in ${target_file}; refusing to modify."
-        rm -f "$tmp_file"
-        return 1
-    elif [[ $awk_status -eq 3 ]]; then
-        #info "Did not find start marker \"${start_marker}\" in \"${target_file}\"; nothing to remove."
-        rm -f "$tmp_file"
-        return 0
-    elif [[ $awk_status -ne 0 ]]; then
-        info "Failed to process ${target_file} for reset (awk status ${awk_status})."
-        rm -f "$tmp_file"
-        return 1
-    fi
-
-    if ! mv "$tmp_file" "$target_file"; then
-        info "Failed to copy over temporary file ${tmp_file} to target file ${target_file}."
-        rm -f "$tmp_file"
-        return 1
-    fi
-
-    rm -f "$tmp_file"
-    return 0
-}
 
 ### check if jaba block already exists in bashrc, and if so, ask user if they want to reset it, or keep it but skip the main setup
 DO_MAIN_SETUP="N"
@@ -488,25 +550,13 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
 
     ### > setup jaba settings in bashrc 
     info "Setting up jaba variables and aliases in $BASHRC_FILE ..."
-    if [[ -f "$BASHRC_TEMP_FILE" ]]; then
-        info "Temp file ${BASHRC_TEMP_FILE} already exists, likely left over from a previous failed installation."
-        prompt_yn "Would you like to remove it?"
-        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
-            info "Okay, removing temporary file."
-                rm -f "${BASHRC_TEMP_FILE}"
-        else
-                error "Please check and remove ${BASHRC_TEMP_FILE} manually before proceeding with installation/reinstallation."
-        fi
-    fi
-    
-    cp "$BASHRC_FILE" "$BASHRC_TEMP_FILE" > /dev/null || { error "Failed to create temporary copy of bashrc file."; }
-    remove_block_between_markers "$BASHRC_TEMP_FILE" "$JABA_VARIABLES_STRING" "$JABA_VARIABLES_ENDSTRING" || exit 1
+    prepare_temp_file_block "$BASHRC_FILE" "$JABA_VARIABLES_STRING" "$JABA_VARIABLES_ENDSTRING" || exit 1
     {
         printf "${JABA_VARIABLES_STRING}\n"
         printf "export JABA_LOCATION=\"%s\"\n" "$REPO_LOCATION"
         #printf "export JABA_DATE_INSTALLED_UTC=\"%s\"\n" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-        printf "export JABA_MARKER_START=\"%s\"\n" "$JABA_VARIABLES_STRING"
-        printf "export JABA_MARKER_END=\"%s\"\n" "$JABA_VARIABLES_ENDSTRING"
+        # printf "export JABA_MARKER_START=\"%s\"\n" "$JABA_VARIABLES_STRING"
+        # printf "export JABA_MARKER_END=\"%s\"\n" "$JABA_VARIABLES_ENDSTRING"
 
         printf "export JABA_INFERRED_SYSTEM=\"%s\"\n" "$INFERRED_SYSTEM"
         printf "export JABA_HOSTNAME=\"%s\"\n" "$HOSTNAME"
@@ -553,15 +603,15 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
         prompt_yn "Also add jaba development aliases?"
         if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
             printf "\n#jaba development aliases\n"
-            printf "alias jaba-cd=\"cd ${REPO_LOCATION}\"\n"
-            printf "alias jaba-scripts-cd=\"cd ${REPO_LOCATION}/scripts\"\n"
-	        printf "alias jaba-pwd=\"echo ${REPO_LOCATION}\"\n"
-            printf "alias jaba-edit-install=\"vim ${REPO_LOCATION}/install.sh;\"\n"
-            printf "alias jaba-edit-py=\"vim ${PYENVSH_FILE};\"\n"
-            printf "alias jaba-edit-pyq=jaba-edit-py\n"
-            printf "alias jaba-edit-qcs=\"vim ${QCSSH_FILE}; vim ${REPO_LOCATION}/tools/quickchecksim.py;\"\n"
-            printf "alias jaba-edit-qcsq=jaba-edit-qcs\n"
-            printf "alias jaba-edit-todo=\"vim ${REPO_LOCATION}/TODO.txt;\"\n"
+            printf "alias cd-jaba=\"cd ${REPO_LOCATION}\"\n"
+            printf "alias cd-jaba-scripts=\"cd ${REPO_LOCATION}/scripts\"\n"
+            printf "alias pwd-jaba=\"echo ${REPO_LOCATION}\"\n"
+            printf "alias edit-jaba-install=\"vim ${REPO_LOCATION}/install.sh;\"\n"
+            printf "alias edit-jaba-py=\"vim ${PYENVSH_FILE};\"\n"
+            printf "alias edit-jaba-pyq=edit-jaba-py\n"
+            printf "alias edit-jaba-qcs=\"vim ${QCSSH_FILE}; vim ${REPO_LOCATION}/tools/quickchecksim.py;\"\n"
+            printf "alias edit-jaba-qcsq=edit-jaba-qcs\n"
+            printf "alias edit-jaba-todo=\"vim ${REPO_LOCATION}/TODO.txt;\"\n"
             printf "alias jaba-pull=\"(cd ${REPO_LOCATION}; git pull origin;)\"\n"
             printf "alias jaba-status=\"(cd ${REPO_LOCATION}; git status;)\"\n"
 	        printf "alias jaba-diff=\"(cd ${REPO_LOCATION}; git diff;)\"\n"
@@ -592,49 +642,13 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
 
         printf "${JABA_VARIABLES_ENDSTRING}\n"
     } >> "${BASHRC_TEMP_FILE}"
-
-    
-    FILE_DIFFERENCE=$(diff -u "$BASHRC_FILE" "$BASHRC_TEMP_FILE")
-    if [[ ! -z "$FILE_DIFFERENCE" ]]; then
-        info "Proposed changes to ${BASHRC_FILE}:"
-        diff --color -u "$BASHRC_FILE" "$BASHRC_TEMP_FILE"
-	    prompt_yn "Should I make the above changes to your .bashrc?"
-        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
-            mv -v "$BASHRC_TEMP_FILE" "$BASHRC_FILE" > /dev/null 
-        else
-            prompt_yn "Okay, I will abort the bashrc changes and end the program. Should I keep a backup of the proposed changes for you to look at?"
-            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
-                info "Keeping proposed changes at ${BASHRC_TEMP_FILE}."
-            else
-                rm -f "${BASHRC_TEMP_FILE}" # remove temp file
-            fi
-            exit 0
-        fi
-    else
-        info "No changes were made to the .bashrc file."
-        rm -f "${BASHRC_TEMP_FILE}"
-    fi
+    merge_block_back_in_temp_file "$BASHRC_FILE" "$JABA_VARIABLES_STRING" "$JABA_VARIABLES_ENDSTRING" || exit 1
 
     # Also install my ~/.vimrc settings
     if [ "$NON_JABA_SETTINGS_INSTALL" -eq 1 ]; then
         prompt_yn "Should I also install Jaeden's vimrc settings?"
         info "Setting up vim settings in ${VIMRC_FILE}..."
-        if [[ -f "$VIMRC_TEMP_FILE" ]]; then
-            info "Temp file ${VIMRC_TEMP_FILE} already exists, likely left over from a previous failed installation."
-            prompt_yn "Would you like to remove it?"
-            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
-                info "Okay, removing temporary file."
-                    rm -f "${VIMRC_TEMP_FILE}"
-            else
-                    error "Please check and remove ${VIMRC_TEMP_FILE} manually before proceeding with installation/reinstallation."
-            fi
-        fi
-        if [[ ! -e "$VIMRC_FILE" ]]; then
-            info "Creating ${VIMRC_FILE} (it did not exist)."
-            touch "$VIMRC_FILE" || { error "Failed to create ${VIMRC_FILE}"; }
-        fi
-        cp "$VIMRC_FILE" "$VIMRC_TEMP_FILE" > /dev/null || { error "Failed to create temporary copy of vimrc file."; }
-        remove_block_between_markers "$VIMRC_TEMP_FILE" "$JABA_VARIABLES_STRING_VIM" "$JABA_VARIABLES_ENDSTRING_VIM" || exit 1
+        prepare_temp_file_block "$VIMRC_FILE" "$JABA_VARIABLES_STRING_VIM" "$JABA_VARIABLES_ENDSTRING_VIM" || exit 1
         {
             printf "${JABA_VARIABLES_STRING_VIM}\n"
             printf "syntax on\n"
@@ -644,26 +658,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             printf "set ttymouse=sgr\n"
             printf "${JABA_VARIABLES_ENDSTRING_VIM}\n"
         } >> "${VIMRC_TEMP_FILE}"
-        FILE_DIFFERENCE=$(diff -u "$VIMRC_FILE" "$VIMRC_TEMP_FILE")
-        if [[ ! -z "$FILE_DIFFERENCE" ]]; then
-            info "Proposed changes to ${VIMRC_FILE}:"
-            diff --color -u "$VIMRC_FILE" "$VIMRC_TEMP_FILE"
-            prompt_yn "Should I make the above changes to your .vimrc?"
-            if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
-                mv -v "$VIMRC_TEMP_FILE" "$VIMRC_FILE" > /dev/null 
-            else
-                prompt_yn "Okay, I will abort the vimrc changes and end the program. Should I keep a backup of the proposed changes for you to look at?"
-                if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
-                    info "Keeping proposed changes at ${VIMRC_TEMP_FILE}."
-                else
-                    rm -f "${VIMRC_TEMP_FILE}" # remove temp file
-                fi
-                exit 0
-            fi
-        else
-            info "No changes were made to the .vimrc file."
-            rm -f "${VIMRC_TEMP_FILE}"
-        fi
+        merge_block_back_in_temp_file "$VIMRC_FILE" "$JABA_VARIABLES_STRING_VIM" "$JABA_VARIABLES_ENDSTRING_VIM" || exit 1
     fi
 fi
 
@@ -683,12 +678,12 @@ if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
         (
             cd scripts/giz
             git checkout main
-            bash setup.sh || exit 1
+            bash giz.sh setup || exit 1
         )
     else
         info "Skipping GIZ setup."
     fi
-
+    
     ### > setup SKI
     prompt_yn "Set up SKI?"
     if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
@@ -696,7 +691,7 @@ if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
         (
             cd scripts/ski
             git checkout main
-            bash setup.sh || exit 1
+            bash ski.sh setup || exit 1
         )
     else
         info "Skipping SKI setup."
@@ -709,7 +704,7 @@ if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
         (
             cd scripts/cld
             git checkout main
-            bash setup.sh || exit 1
+            bash cld.sh setup || exit 1
         )
     else
         info "Skipping CLD setup."
