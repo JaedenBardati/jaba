@@ -424,12 +424,16 @@ EOF
     UseKeychain yes"
                     fi
                 fi
+                CONFIG_STR="${CONFIG_STR}
+"
                 CONFIG_STR=${CONFIG_STR}$(cat <<EOF
     IdentityFile ${PUBLIC_KEY}
     IdentitiesOnly yes
-
+    
 EOF
                 )
+                CONFIG_STR="${CONFIG_STR}
+"
                 echo "$CONFIG_STR" >> "${YOUR_SSH_DIR}/config"
             fi
         fi
