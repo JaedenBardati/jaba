@@ -427,7 +427,7 @@ EOF
                 CONFIG_STR="${CONFIG_STR}
 "
                 CONFIG_STR=${CONFIG_STR}$(cat <<EOF
-    IdentityFile ${PUBLIC_KEY}
+    IdentityFile ${PRIVATE_KEY}
     IdentitiesOnly yes
     
 EOF
