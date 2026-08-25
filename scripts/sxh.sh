@@ -5,6 +5,7 @@
 # Jaeden Bardati 2026 (jbardati@caltech.edu)
 
 SERVER="$1"
+SXH_FILE_TRANSFER_LOCATION="${JABA_SXH_FILE_TRANSFER_LOCATION:-.}" # defaults to whereever you run this script from, but can be set to a common location if desired
 TMUX_SESSION_NAME="sxh"
 TMUX_WINDOW_NAME="${SERVER}"
 LOCAL_HOSTNAME="$(hostname -f)"
@@ -14,6 +15,8 @@ warn()   { echo -e "\033[1;33m[WARN]\033[0m $*"; }
 error()  { echo -e "\033[1;31m[ERROR]\033[0m $*" >&2; exit 1; }
 prompt() { printf -v p "\033[1;36m[PROMPT]\033[0m ${1}: "; read -p "$p" "$2"; }
 prompt_yn() { prompt "$1 [y/n]" YN; YN=$(echo "$YN" | tr -d ' ' | tr '[:upper:]' '[:lower:]'); } 
+
+cd ${SXH_FILE_TRANSFER_LOCATION} || error "Failed to change directory to ${SXH_FILE_TRANSFER_LOCATION}. Please check that this path exists and is accessible."
 
 # basic checks
 info "This script will setup a ssh/sftp connection to a server host in a tmux window.";

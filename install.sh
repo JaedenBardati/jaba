@@ -595,6 +595,24 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             printf "\n#jaba extra script aliases\n"
             printf "alias sxh='${REPO_LOCATION}/scripts/sxh.sh'\n"
             printf "alias setup-ssh='${REPO_LOCATION}/scripts/setup_ssh.sh'\n"
+            if [[ -z "$JABA_SXH_FILE_TRANSFER_LOCATION" ]]; then
+                prompt "Where would you like to set your default sxh file transfer location? (default is .)" SXH_FILE_TRANSFER_LOCATION
+                if [[ -z "$SXH_FILE_TRANSFER_LOCATION" ]]; then
+                    SXH_FILE_TRANSFER_LOCATION="."
+                fi
+            else
+                prompt_yn "Would you like to update the default sxh file transfer location?"
+                if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+                    prompt "Where would you like to set your default sxh file transfer location? (default is .)" SXH_FILE_TRANSFER_LOCATION
+                    if [[ -z "$SXH_FILE_TRANSFER_LOCATION" ]]; then
+                        SXH_FILE_TRANSFER_LOCATION="."
+                    fi
+                else
+                    SXH_FILE_TRANSFER_LOCATION="$JABA_SXH_FILE_TRANSFER_LOCATION"
+                fi
+            fi
+            printf "export JABA_SXH_FILE_TRANSFER_LOCATION=\"%s\"\n" "$SXH_FILE_TRANSFER_LOCATION"
+            printf "alias cd-sxh-file-transfer-location=\"cd ${SXH_FILE_TRANSFER_LOCATION}\"\n"
         fi
 
         prompt_yn "Also add jaba development aliases?"
@@ -651,18 +669,22 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
     # Also install my ~/.vimrc settings
     if [ "$NON_JABA_SETTINGS_INSTALL" -eq 1 ]; then
         prompt_yn "Should I also install Jaeden's vimrc settings?"
-        info "Setting up vim settings in ${VIMRC_FILE}..."
-        prepare_temp_file_block "$VIMRC_FILE" "$JABA_VARIABLES_STRING_VIM" "$JABA_VARIABLES_ENDSTRING_VIM" || exit 1
-        {
-            printf "${JABA_VARIABLES_STRING_VIM}\n"
-            printf "syntax on\n"
-            printf "colorscheme retrobox\n"
-            printf "set t_Co=256\n"
-            printf "set mouse=a\n"
-            printf "set ttymouse=sgr\n"
-            printf "${JABA_VARIABLES_ENDSTRING_VIM}\n"
-        } >> "${VIMRC_FILE}.tmp"
-        merge_block_back_in_temp_file "$VIMRC_FILE" "$JABA_VARIABLES_STRING_VIM" "$JABA_VARIABLES_ENDSTRING_VIM" || exit 1
+        if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
+            info "Setting up vim settings in ${VIMRC_FILE}..."
+            prepare_temp_file_block "$VIMRC_FILE" "$JABA_VARIABLES_STRING_VIM" "$JABA_VARIABLES_ENDSTRING_VIM" || exit 1
+            {
+                printf "${JABA_VARIABLES_STRING_VIM}\n"
+                printf "syntax on\n"
+                printf "colorscheme retrobox\n"
+                printf "set t_Co=256\n"
+                printf "set mouse=a\n"
+                printf "set ttymouse=sgr\n"
+                printf "${JABA_VARIABLES_ENDSTRING_VIM}\n"
+            } >> "${VIMRC_FILE}.tmp"
+            merge_block_back_in_temp_file "$VIMRC_FILE" "$JABA_VARIABLES_STRING_VIM" "$JABA_VARIABLES_ENDSTRING_VIM" || exit 1
+        else
+            info "Skipping vimrc settings installation."
+        fi
     fi
 fi
 
