@@ -27,7 +27,7 @@ QCSPY_FILE="${JABA_LOCATION}/tools/quickchecksim.py"
 
 if [ "$1" == "" ]; then
     echo "launching python interactively..."
-    ${JABA_PYTHON_CMD} -i -c "import numpy as np; import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt; import importlib.util, sys, os; spec=importlib.util.spec_from_file_location('quickchecksim',os.path.expanduser('${QCSPY_FILE}')); qcs=importlib.util.module_from_spec(spec); sys.modules['quickchecksim']=qcs; spec.loader.exec_module(qcs); from astropy import units as u;"
+    ${JABA_PYTHON_CMD} -i -c "import numpy as np; import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt; import importlib.util, sys, os; spec=importlib.util.spec_from_file_location('quickchecksim',os.path.expanduser('${QCSPY_FILE}')); qcs=importlib.util.module_from_spec(spec); sys.modules['quickchecksim']=qcs; spec.loader.exec_module(qcs); import jaba; from jaba.utils import units as u; from jaba.utils import constants as c"
 else
     if [[ ! -d "$ANALYSIS_DIR" ]]; then
         mkdir -p "$ANALYSIS_DIR"
