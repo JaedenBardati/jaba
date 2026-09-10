@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # This script will get a file from a remote server and sync a local copy with the remote copy to edit locally.
-# It is highly recommended to set up ssh agent keys before running this script, so that you don't have to enter your password every time.
+# It is highly recommended to set up ssh agent keys before running this script, so that you don't have to enter your password/authentication every time.
 # Jaeden Bardati 2026 (jbardati@caltech.edu)
 
 eval $(ssh-agent -s) > /dev/null  # activate ssh agent
@@ -21,8 +21,8 @@ REMOTE="${1}"
 LOCAL="${2}"
 
 INTERVAL=1
-REMOVE_LOCAL_ON_EXIT=1
-OVERWRITE_LOCAL_WITH_REMOTE=0 
+OPEN="open" # works for mac, change to e.g. vim on linux, leaving empty will not open the file automatically
+OVERWRITE_LOCAL_WITH_REMOTE=1
 
 # Validate input arguments
 if [ -z "$REMOTE" ]; then
@@ -31,8 +31,10 @@ fi
 if [ "${REMOTE#*:}" = "$REMOTE" ]; then
     error "Remote path must be specified in the format user@host:/path/to/file"
 fi
-if ! ssh -q "$REMOTE" "test -e '$REMOTE'" 2>/dev/null; then
-    error "Remote path '$REMOTE' does not exist or is not accessible."
+remote_host="${REMOTE%:*}"
+remote_path="${REMOTE#*:}"
+if ! ssh "$remote_host" "test -e '$remote_path'" >/dev/null 2>&1; then
+    error "Remote path '$remote_path' on host '$remote_host' does not exist or is not accessible."
 fi
 
 if [ -z "$LOCAL" ]; then
@@ -42,14 +44,12 @@ if [ -z "$LOCAL" ]; then
     OVERWRITE_LOCAL_WITH_REMOTE=1
 fi
 if [ -f "$LOCAL" ]; then
-    REMOVE_LOCAL_ON_EXIT=0
     prompt_yn "Local file '$LOCAL' already exists. Do you want to overwrite it with the remote file?"
     if [ "$YN" != "y" ] && [ "$YN" != "yes" ]; then
         OVERWRITE_LOCAL_WITH_REMOTE=0
     fi
 fi
 if [ -d "$LOCAL" ]; then
-    REMOVE_LOCAL_ON_EXIT=0
     prompt_yn "Local directory '$LOCAL' already exists. Do you want to overwrite it with the remote directory?"
     if [ "$YN" != "y" ] && [ "$YN" != "yes" ]; then
         OVERWRITE_LOCAL_WITH_REMOTE=0
@@ -60,23 +60,25 @@ if [ "${LOCAL#*:}" != "$LOCAL" ]; then
     print_usage
 fi
 if [ "$OVERWRITE_LOCAL_WITH_REMOTE" -eq 1 ]; then
-    info "Copying remote file to local..."
-    rsync -avz "$REMOTE" "$LOCAL" || error "Failed to copy remote file to local."
+    info "Copying remote file to local as temporary file..."
+    rsync -avz "$REMOTE" "$LOCAL" >/dev/null || error "Failed to copy remote file to local."
 fi
 
-
 # prepare temporary files
-info "Watching '$LOCAL' for changes... Press [CTRL+C] to stop."
 LAST_RUN_FILE="/tmp/edit_sync_last_run.$$"
 touch "$LAST_RUN_FILE"
 
-if [ "$REMOVE_LOCAL_ON_EXIT" -eq 1 ]; then
-    trap 'rm -f "$LAST_RUN_FILE"; rm -f "$LOCAL"; exit 0' INT TERM EXIT
+if [ "$OVERWRITE_LOCAL_WITH_REMOTE" -eq 1 ]; then
+    trap 'rm -f "$LAST_RUN_FILE"; rm -rf "$LOCAL"; exit 0' INT TERM EXIT
 else
     trap 'rm -f "$LAST_RUN_FILE"; exit 0' INT TERM EXIT
 fi
 
-# Start the sync loop
+# Open file and start the sync loop
+info "Watching '$LOCAL' for changes... Press [CTRL+C] to stop."
+if [ -n "$OPEN" ] && [ -f "$LOCAL" ]; then
+    eval "${OPEN} \"$LOCAL\"" # open the local file with the specified command
+fi
 while true; do
     CHANGE_DETECTED=0
     if [ -d "$LOCAL" ]; then
