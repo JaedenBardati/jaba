@@ -245,7 +245,7 @@ def get_profile(x, qty, weight=None, kind='mean', nbins=100, xlog=False, xmin=No
 #####################                                              QUICK CHECK SIMULATION                                                          #####################
 ########################################################################################################################################################################
 
-def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=True, bh_parttype=3, bh_index=0,
+def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=True, bh_parttype=3, bh_id=None,
         # top level flags:
         print_black_hole_info=True,
         dump_particle_histograms=False,
@@ -308,6 +308,12 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
 
         # center around particle
         if center_around_BH:
+            if len(snap.mass[bh_parttype]) == 1 or bh_id is None:
+                bh_index = 0 # choose the only bh
+            elif bh_id is None:
+                bh_index = np.argmax(snap.mass[bh_parttype]) # choose most massive black hole
+            else:
+                bh_index = np.argwhere(snap['ParticleIDs', bh_id] == bh_id)[0,0] # find bh based on id # TODO generalize
             cpos = snap.pos[bh_parttype][bh_index][np.newaxis, :].to('pc')
             cvel = snap.vel[bh_parttype][bh_index][np.newaxis, :].to('km/s')
             rsink = (snap.metadata['Fixed_ForceSoftening_Keplerian_Kernel_Extent'][bh_parttype]*snap.metadata['UnitLength_In_CGS']*u.cm).to('pc')
@@ -408,7 +414,7 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
             _all_particle_types = (particle_types if not center_around_BH else ['bh',] + list(particle_types))
             _s = [get_profile_with_defaults(snap.r(pt).to('pc'), snap.mass[pt].to('Msun'), kind='D') for pt in _all_particle_types] # M(<r) for each particle type
             _s_names = list([particle_type_meaning_strs_dict[snap._resolve_particle_type_meaning(pt)][1] for pt in _all_particle_types])
-            _s = [(x, np.sqrt(c.G * y / (x * u.pc)).to('km/s')) for x, y in _s]
+            _s = [(x, np.sqrt(c.G * y * u.Msun / (x * u.pc)).to('km/s')) for x, y in _s]
             #if center_around_BH:
                 #_s.insert(0, (_s[0][0], np.sqrt(c.G * snap.mass['bh', bh_index].to('Msun') / (_s[0][0] * u.pc)))) # does not account for multiple bhs
                 #_s_names.insert(0, 'Black Hole')
@@ -437,17 +443,18 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
             _rbin, _valv = get_profile_with_defaults(snap.r(0).to('pc'), np.sqrt((((np.linalg.norm(snap[0,'MagneticField'].to('G_cgs').value, axis=1)*u.G_cgs)**2/(4*np.pi*snap.dens0))).to('km^2 s^-2').value), weight=snap.mass0, kind='mean')
             jv.loglog(_rbin, _valv/total_vc, ls=((0, (3, 2)),), color=None, label=r'Magnetic $v_A/v_c$')
 
-            pdot_z = (0.4*u.cm**2/u.g*snap[0, 'PhotonFluxDensity'][:, 2*5+4] * snap.z(0)/np.abs(snap.z(0)) / c.c).to('km s**-2')
-            _rbin, _radratio = get_profile_with_defaults(snap.r(0).to('pc'), (pdot_z / np.abs(c.G * snap.mass['bh'].to('Msun') / snap.r(0)**2)).to('1'), weight=snap.mass0, kind='mean') # note: this assumes in black hole dominated regime
-            #_rbin, _radratio = get_profile_with_defaults(snap.r(0).to('pc'), (pdot_z*snap.r(0)).to('km**2 s**-2'), weight=snap.mass0, kind='mean')/total_vc**2 # this is like above but also accounts for star, gas and dm contributions to vc
-            jv.loglog(_rbin, _radratio, ls=((0, (6, 1)),), color='orange', label=r'Radiation $v_{rad,z>0}/v_c$')
-            jv.loglog(_rbin, -_radratio, ls=((0, (1, 6)),), color='orange', label=r'Radiation $v_{rad,z<0}/v_c$')
+            if 'PhotonFluxDensity' in snap[0]:
+                pdot_z = (0.4*u.cm**2/u.g*snap[0, 'PhotonFluxDensity'][:, 2*5+4] * snap.z(0)/np.abs(snap.z(0)) / c.c).to('km s**-2')
+                _rbin, _radratio = get_profile_with_defaults(snap.r(0).to('pc'), (pdot_z / np.abs(c.G * snap.mass['bh'].to('Msun') / snap.r(0)**2)).to('1'), weight=snap.mass0, kind='mean') # note: this assumes in black hole dominated regime
+                #_rbin, _radratio = get_profile_with_defaults(snap.r(0).to('pc'), (pdot_z*snap.r(0)).to('km**2 s**-2'), weight=snap.mass0, kind='mean')/total_vc**2 # this is like above but also accounts for star, gas and dm contributions to vc
+                jv.loglog(_rbin, _radratio, ls=((0, (6, 1)),), color='orange', label=r'Radiation $v_{rad,z>0}/v_c$')
+                jv.loglog(_rbin, -_radratio, ls=((0, (1, 6)),), color='orange', label=r'Radiation $v_{rad,z<0}/v_c$')
 
-            _rbin, _radratio = get_profile_with_defaults(snap.r(0).to('pc'), np.abs(pdot_z / np.abs(c.G * snap.mass['bh'].to('Msun') / snap.r(0)**2)).to('1'), weight=snap.mass0, kind='rms') # note: this assumes in black hole dominated regime
-            #_rbin, _radratio = get_profile_with_defaults(snap.r(0).to('pc'), (np.abs(pdot_z) / np.sqrt(c.G * snap.mass['bh'].to('Msun') / snap.r(0)**3)).to('km/s'), weight=snap.mass0, kind='rms')/total_vc # note: this partly (?) assumes in black hole dominated regime
-            #_rbin, _radratio = get_profile_with_defaults(snap.r(0).to('pc'), np.abs(pdot_z*snap.r(0)).to('km**2 s**-2'), weight=snap.mass0, kind='mean')/total_vc**2 # this is like above but also accounts for star, gas and dm contributions to vc
-            #_rbin, _radratio = get_profile_with_defaults(snap.r(0).to('pc'), np.abs(pdot_z / np.abs(c.G * snap.mass['bh'].to('Msun') / snap.r(0)**2)).to('1'), weight=snap.mass0, kind='mean')
-            jv.loglog(_rbin, _radratio, ls=((0, (1, 3)),), color=None, label=r'Radiation $\langle v_{rad,z}^2 \rangle^{1/2}/v_c$')
+                #_rbin, _radratio = get_profile_with_defaults(snap.r(0).to('pc'), np.abs(pdot_z / np.abs(c.G * snap.mass['bh'].to('Msun') / snap.r(0)**2)).to('1'), weight=snap.mass0, kind='rms') # note: this assumes in black hole dominated regime
+                #_rbin, _radratio = get_profile_with_defaults(snap.r(0).to('pc'), (np.abs(pdot_z) / np.sqrt(c.G * snap.mass['bh'].to('Msun') / snap.r(0)**3)).to('km/s'), weight=snap.mass0, kind='rms')/total_vc # note: this partly (?) assumes in black hole dominated regime
+                #_rbin, _radratio = get_profile_with_defaults(snap.r(0).to('pc'), np.abs(pdot_z*snap.r(0)).to('km**2 s**-2'), weight=snap.mass0, kind='mean')/total_vc**2 # this is like above but also accounts for star, gas and dm contributions to vc
+                #_rbin, _radratio = get_profile_with_defaults(snap.r(0).to('pc'), np.abs(pdot_z / np.abs(c.G * snap.mass['bh'].to('Msun') / snap.r(0)**2)).to('1'), weight=snap.mass0, kind='mean')
+                #jv.loglog(_rbin, _radratio, ls=((0, (1, 3)),), color=None, label=r'Radiation $\langle v_{rad,z}^2 \rangle^{1/2}/v_c$')
             jv.close(loglog=True, out=profile_dir+'aspect_ratio_{}.png'.format(snap.name), xlabel='Spherical radius $r$ (pc)', ylabel=r'Aspect ratio $H/R$', xmin=xmin, xmax=xmax, force_regular_log_major_ticks=force_regular_log_major_ticks, force_minor_ticks=force_minor_ticks, ymin=1e-3, ymax=2)
 
             LS = ['-', '--', '-.', ':', (0, (6, 1)), (0, (3, 1, 1, 1)), (0, (3, 5, 1, 5)), (0, (3, 10, 1, 10)), (0, (3, 10, 1, 10, 1, 10))]
@@ -974,7 +981,7 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
         log_timing()
 
 
-def timeseries_info(filepaths, output_dir=None, bh_parttype=3, bh_index=0):
+def timeseries_info(filepaths, output_dir=None, bh_parttype=3):
     if output_dir is None:
         output_dir='.'
     output_dir+='/'
@@ -1028,18 +1035,15 @@ def timeseries_info(filepaths, output_dir=None, bh_parttype=3, bh_index=0):
                 jv.scatter(times.to('yr').value, bh_mdots_Msunpyr.T[k]/Medd_est.T[k])
             jv.plot(times.to('yr').value, tuple(bh_mdots_Msunpyr.T/Medd_est.T), ls='-', xlabel='Time (yr)', ylabel=r"BH $\dot{M}$ / $\dot{M}_\mathrm{Edd}$", ylog=True, out=output_dir+'bh_mdots_over_edd.png')
 
-
     log_timing()
     
 
 
 def main():
     log_timing(f"getting filearguments...")
-    filepath, analysis_dir, bh_parttype, bh_index = get_file_arguments(str, str, int, int, fill_empties_with_none=True)
+    filepath, analysis_dir, bh_parttype, bh_id = get_file_arguments(str, str, int, int, fill_empties_with_none=True)
     if bh_parttype is None:
         bh_parttype=3
-    if bh_index is None:
-        bh_index=0
     
     assert filepath is not None, 'Need to enter a filepath.'
     if analysis_dir is None:
@@ -1048,20 +1052,20 @@ def main():
     debug_flag=None
     print('debug flag: {}'.format(bool(debug_flag))) # todo - remove debug flag and replace with quick check options
     print('bh particle type: {}'.format(bh_parttype)) # todo - remove debug flag and replace with quick check options
-    print('bh index: {}'.format(bh_index)) # todo - remove debug flag and replace with quick check options
+    print('bh id: {}'.format(bh_id)) # todo - remove debug flag and replace with quick check options
     if os.path.exists(filepath):
-        quick_check(filepath, output_dir=analysis_dir, debugging=bool(debug_flag), bh_parttype=bh_parttype, bh_index=bh_index)
+        quick_check(filepath, output_dir=analysis_dir, debugging=bool(debug_flag), bh_parttype=bh_parttype, bh_id=bh_id)
     else:
         filepaths = glob.glob(filepath + "_*.hdf5", recursive=True)
         if len(filepaths) < 1:
             print(f'no filepaths found in form "{filepaths}" ... exiting')
             return 1
         if len(filepaths) > 1:
-            timeseries_info(filepaths, output_dir=analysis_dir, bh_parttype=bh_parttype, bh_index=bh_index)
+            timeseries_info(filepaths, output_dir=analysis_dir, bh_parttype=bh_parttype)
         else:
             print('only one filepath found, ignoring timeseries outputs...')
         for fp in filepaths:
-            quick_check(fp, output_dir=analysis_dir, debugging=bool(debug_flag), bh_parttype=bh_parttype, bh_index=bh_index)
+            quick_check(fp, output_dir=analysis_dir, debugging=bool(debug_flag), bh_parttype=bh_parttype, bh_id=bh_id)
 
 if __name__ == '__main__':
     main()
