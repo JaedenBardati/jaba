@@ -674,8 +674,14 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             prepare_temp_file_block "$VIMRC_FILE" "$JABA_VARIABLES_STRING_VIM" "$JABA_VARIABLES_ENDSTRING_VIM" || exit 1
             {
                 printf "${JABA_VARIABLES_STRING_VIM}\n"
+                printf "\"color scheme\n"
                 printf "syntax on\n"
-                printf "colorscheme retrobox\n"
+                printf "try\n"
+                printf "    colorscheme retrobox\n"
+                printf "catch\n"
+                printf "    colorscheme desert\n"
+                printf "endtry\n"
+                printf "\n\"other\n"
                 printf "set t_Co=256\n"
                 printf "set mouse=a\n"
                 printf "set ttymouse=sgr\n"
@@ -703,6 +709,7 @@ if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
         info "Setting up GIZ submodule..."
         (
             cd scripts/giz
+            git pull
             git checkout main
             bash giz.sh setup || exit 1
         )
@@ -716,6 +723,7 @@ if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
         info "Setting up SKI submodule..."
         (
             cd scripts/ski
+            git pull
             git checkout main
             bash ski.sh setup || exit 1
         )
@@ -729,6 +737,7 @@ if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
         info "Setting up CLD submodule..."
         (
             cd scripts/cld
+            git pull
             git checkout main
             bash cld.sh setup || exit 1
         )
