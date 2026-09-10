@@ -100,7 +100,7 @@ merge_block_back_in_temp_file () {
 
     if ! cmp -s "$target_file" "$temp_file"; then
         info "Proposed changes to ${target_file}:"
-        diff --color -u "$target_file" "$temp_file" || git diff --color -u "$target_file" "$temp_file"
+        git diff --color -u "$target_file" "$temp_file"
         prompt_yn "Should I make the above changes to your ${file_name}?"
         if [[ "$YN" == "y" || "$YN" == "yes" ]]; then
             mv -v "$temp_file" "$target_file" > /dev/null 
