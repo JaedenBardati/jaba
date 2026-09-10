@@ -408,11 +408,13 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
             _all_particle_types = (particle_types if not center_around_BH else ['bh',] + list(particle_types))
             _s = [get_profile_with_defaults(snap.r(pt).to('pc'), snap.mass[pt].to('Msun'), kind='D') for pt in _all_particle_types] # M(<r) for each particle type
             _s_names = list([particle_type_meaning_strs_dict[snap._resolve_particle_type_meaning(pt)][1] for pt in _all_particle_types])
-            _s = [(x, np.sqrt(c.G * y / (x * u.pc))) for x, y in _s]
+            _s = [(x, np.sqrt(c.G * y / (x * u.pc)).to('km/s')) for x, y in _s]
             #if center_around_BH:
                 #_s.insert(0, (_s[0][0], np.sqrt(c.G * snap.mass['bh', bh_index].to('Msun') / (_s[0][0] * u.pc)))) # does not account for multiple bhs
                 #_s_names.insert(0, 'Black Hole')
-            _s.insert(0, (_s[0][0], np.sum([y for x, y in _s], axis=0)))
+            total_vc = np.sum([y for x, y in _s], axis=0)
+            _s.insert(0, (_s[0][0], total_vc))
+
             _s_names.insert(0, 'Total')
             jv.loglog(*zip(*_s), label=tuple(n for n in _s_names), ls='-', color=None, out=profile_dir+'vcirc_{}.png'.format(snap.name), xlabel='Spherical radius $r$ (pc)', ylabel=r'Circular velocity $v_\mathrm{circ}$ (km/s)', xmin=xmin, xmax=xmax, force_regular_log_major_ticks=force_regular_log_major_ticks, force_minor_ticks=force_minor_ticks)
             
@@ -424,9 +426,29 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
             jv.loglog(*zip(Mdot_in, Mdot_out), label=('Inflow', 'Outflow'), ls=('-', '--'), color=('C0', 'C1'), out=profile_dir+'mdot_{}.png'.format(snap.name), xlabel='Spherical radius $r$ (pc)', ylabel=r'Accretion rate $\dot{M}$ ($M_\odot$/yr)', xmin=xmin, xmax=xmax, force_regular_log_major_ticks=force_regular_log_major_ticks, force_minor_ticks=force_minor_ticks)
 
             # aspect ratio (fig 5 of FIF zoom-out draft)
-            _rbin, _zrms = get_profile_with_defaults(snap.r(0).to('pc'), snap.pos0[:, 2].to('pc'), weight=snap.dens0, kind='rms')
-            jv.loglog(_rbin, _zrms/_rbin, ls='-', color='black', out=profile_dir+'aspect_ratio_{}.png'.format(snap.name), xlabel='Spherical radius $r$ (pc)', ylabel=r'Aspect ratio $H/R$', xmin=xmin, xmax=xmax, force_regular_log_major_ticks=force_regular_log_major_ticks, force_minor_ticks=force_minor_ticks, ymin=1e-3, ymax=2)
+            _rbin, _zabsmean = get_profile_with_defaults(snap.r(0).to('pc'), np.abs(snap.pos0[:, 2].to('pc')), weight=snap.mass0, kind='median')
+            jv.loglog(_rbin, _zabsmean/_rbin, ls='-', color='black', label='Median $|z|$')
+            _rbin, _zrms = get_profile_with_defaults(snap.r(0).to('pc'), snap.pos0[:, 2].to('pc'), weight=snap.mass0, kind='rms')
+            jv.loglog(_rbin, _zrms/_rbin, ls='--', color=None, label=r'RMS $\langle z^2 \rangle^{1/2}/r$')
+            _rbin, _vturbz = get_profile_with_defaults(snap.r(0).to('pc'), snap.vel0[:, 2].to('km/s'), weight=snap.mass0, kind='rms')
+            jv.loglog(_rbin, _vturbz/total_vc, ls=':', color=None, label=r'Turbulent $\delta v_z/v_c$')
+            _rbin, _vcs = get_profile_with_defaults(snap.r(0).to('pc'), snap[0, 'SoundSpeed'].to('km/s'), weight=snap.mass0, kind='mean')
+            jv.loglog(_rbin, _vcs/total_vc, ls='-.', color=None, label=r'Thermal $c_s/v_c$')
+            _rbin, _valv = get_profile_with_defaults(snap.r(0).to('pc'), np.sqrt((((np.linalg.norm(snap[0,'MagneticField'].to('G_cgs').value, axis=1)*u.G_cgs)**2/(4*np.pi*snap.dens0))).to('km^2 s^-2').value), weight=snap.mass0, kind='mean')
+            jv.loglog(_rbin, _valv/total_vc, ls=((0, (3, 2)),), color=None, label=r'Magnetic $v_A/v_c$')
 
+            pdot_z = (0.4*u.cm**2/u.g*snap[0, 'PhotonFluxDensity'][:, 2*5+4] * snap.z(0)/np.abs(snap.z(0)) / c.c).to('km s**-2')
+            _rbin, _radratio = get_profile_with_defaults(snap.r(0).to('pc'), (pdot_z / np.abs(c.G * snap.mass['bh'].to('Msun') / snap.r(0)**2)).to('1'), weight=snap.mass0, kind='mean') # note: this assumes in black hole dominated regime
+            #_rbin, _radratio = get_profile_with_defaults(snap.r(0).to('pc'), (pdot_z*snap.r(0)).to('km**2 s**-2'), weight=snap.mass0, kind='mean')/total_vc**2 # this is like above but also accounts for star, gas and dm contributions to vc
+            jv.loglog(_rbin, _radratio, ls=((0, (6, 1)),), color='orange', label=r'Radiation $v_{rad,z>0}/v_c$')
+            jv.loglog(_rbin, -_radratio, ls=((0, (1, 6)),), color='orange', label=r'Radiation $v_{rad,z<0}/v_c$')
+
+            _rbin, _radratio = get_profile_with_defaults(snap.r(0).to('pc'), np.abs(pdot_z / np.abs(c.G * snap.mass['bh'].to('Msun') / snap.r(0)**2)).to('1'), weight=snap.mass0, kind='rms') # note: this assumes in black hole dominated regime
+            #_rbin, _radratio = get_profile_with_defaults(snap.r(0).to('pc'), (np.abs(pdot_z) / np.sqrt(c.G * snap.mass['bh'].to('Msun') / snap.r(0)**3)).to('km/s'), weight=snap.mass0, kind='rms')/total_vc # note: this partly (?) assumes in black hole dominated regime
+            #_rbin, _radratio = get_profile_with_defaults(snap.r(0).to('pc'), np.abs(pdot_z*snap.r(0)).to('km**2 s**-2'), weight=snap.mass0, kind='mean')/total_vc**2 # this is like above but also accounts for star, gas and dm contributions to vc
+            #_rbin, _radratio = get_profile_with_defaults(snap.r(0).to('pc'), np.abs(pdot_z / np.abs(c.G * snap.mass['bh'].to('Msun') / snap.r(0)**2)).to('1'), weight=snap.mass0, kind='mean')
+            jv.loglog(_rbin, _radratio, ls=((0, (1, 3)),), color=None, label=r'Radiation $\langle v_{rad,z}^2 \rangle^{1/2}/v_c$')
+            jv.close(loglog=True, out=profile_dir+'aspect_ratio_{}.png'.format(snap.name), xlabel='Spherical radius $r$ (pc)', ylabel=r'Aspect ratio $H/R$', xmin=xmin, xmax=xmax, force_regular_log_major_ticks=force_regular_log_major_ticks, force_minor_ticks=force_minor_ticks, ymin=1e-3, ymax=2)
 
             LS = ['-', '--', '-.', ':', (0, (6, 1)), (0, (3, 1, 1, 1)), (0, (3, 5, 1, 5)), (0, (3, 10, 1, 10)), (0, (3, 10, 1, 10, 1, 10))]
 
@@ -642,7 +664,7 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
                 cvel = snap['PartType%d' % bh_parttype, 'Velocities'][0][np.newaxis, :].to('km/s')
 
             emissivity, alpha_abs, alpha_sca, alpha_eff = blr.get_Halpha_alpha_emissivity(snap)
-            luminosity = (emissivity * 4*np.pi*u.sr * snap.mass0/snap.dens0).to('erg/s')
+            luminosity = (emissivity * snap.mass0/snap.dens0).to('erg/s')
             volume = np.array((snap.mass0/snap.dens0).to('pc**3'), dtype=np.float64)
             rsink_pc = rsink.to('pc').value if 'rsink' in locals() else 0.0
 
@@ -706,7 +728,7 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
             jv.loglog(*zip(Mdot_in, Mdot_out, Mdot_in2, Mdot_out2, Mdot_in3, Mdot_out3), label=('Inflow', 'Outflow', r'Inflow BLR ($L_\text{BLR} > \langle L\rangle$)', r'Outflow BLR ($L_\text{BLR} > \langle L\rangle$)', r'Inflow BLR ($L_\text{BLR} > \langle L\rangle + 3\sigma_L$)', r'Outflow BLR ($L_\text{BLR} > \langle L\rangle + 3\sigma_L$)'), ls=('-', '--', '-', '--', '-', '--'), color=('C0', 'C0', 'C1', 'C1', 'C2', 'C2'), out=blr_profile_dir+'mdot_{}.png'.format(snap.name), xlabel='Spherical radius $r$ (pc)', ylabel=r'Accretion rate $\dot{M}$ ($M_\odot$/yr)', xmin=xmin, xmax=xmax, force_regular_log_major_ticks=force_regular_log_major_ticks, force_minor_ticks=force_minor_ticks)
 
             # aspect ratio (fig 5 of FIF zoom-out draft) --> TODO: use something like <z> +/- sigma_z instead of rms, since they aren't necessarily symmetric about z=0 
-            _rbin, _zrms = get_profile_with_defaults(snap.r(0).to('pc'), snap.pos0[:, 2].to('pc'), weight=snap.dens0, kind='rms')
+            _rbin, _zrms = get_profile_with_defaults(snap.r(0).to('pc'), snap.pos0[:, 2].to('pc'), weight=snap.mass0, kind='rms')
             _rbin2, _zmean2, _zrms2 = get_profile_with_defaults(snap.r(0)[_gtr_mean].to('pc'), snap.pos0[:, 2][_gtr_mean].to('pc'), weight=luminosity[_gtr_mean], kind='mean, rms')
             _rbin3, _zmean3, _zrms3 = get_profile_with_defaults(snap.r(0)[_gtr_mean3].to('pc'), snap.pos0[:, 2][_gtr_mean3].to('pc'), weight=luminosity[_gtr_mean3], kind='mean, rms')
             jv.loglog((_rbin2, _rbin3), (_zrms2/_rbin2, _zrms3/_rbin3), label=(r'mean BLR ($L_\text{BLR} > \langle L\rangle$)', r'mean BLR ($L_\text{BLR} > \langle L\rangle + 3\sigma_L$)'), ls='--')

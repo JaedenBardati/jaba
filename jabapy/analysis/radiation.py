@@ -221,6 +221,13 @@ def planck_function_lam(lam: u.micron, T: u.K):
     B_lam = (2*c.h.cgs.value*c.c.cgs.value**2)/lam**5 * 1/(np.exp(c.h.cgs.value*c.c.cgs.value/(lam*c.k_B.cgs.value*T)) - 1)
     return B_lam * u.erg / (u.s * u.cm**2 * u.sr * u.cm)
 
+def planck_function_nu(nu: u.Hz, T: u.K):
+    # Returns the Planck function B_nu(T).
+    T = T.to(u.K).value
+    nu = nu.to(u.Hz).value
+    B_nu = (2*c.h.cgs.value*nu**3)/c.c.cgs.value**2 * 1/(np.exp(c.h.cgs.value*nu/(c.k_B.cgs.value*T)) - 1)
+    return B_nu * u.erg / (u.s * u.cm**2 * u.sr * u.Hz)
+
 
 
 
@@ -231,6 +238,8 @@ alpha_electron_scattering = alpha_thomson_scattering
 alpha_es_cgs = alpha_thomson_scattering
 alpha_T_cgs = alpha_thomson_scattering
 tau_eff = effective_extinction_optical_depth
+blackbody_lam = planck_function_lam
+blackbody_nu = planck_function_nu
 
 # Backward-compatible aliases used by existing notebooks - should be removed eventually
 h_cgs = c.h.cgs.value

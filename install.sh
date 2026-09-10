@@ -613,6 +613,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             fi
             printf "export JABA_SXH_FILE_TRANSFER_LOCATION=\"%s\"\n" "$SXH_FILE_TRANSFER_LOCATION"
             printf "alias cd-sxh-file-transfer-location=\"cd ${SXH_FILE_TRANSFER_LOCATION}\"\n"
+            printf "alias esync='${REPO_LOCATION}/scripts/esync.sh'\n"
         fi
 
         prompt_yn "Also add jaba development aliases?"
