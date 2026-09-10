@@ -245,13 +245,13 @@ def get_profile(x, qty, weight=None, kind='mean', nbins=100, xlog=False, xmin=No
 #####################                                              QUICK CHECK SIMULATION                                                          #####################
 ########################################################################################################################################################################
 
-def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=True,
+def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=True, bh_parttype=3, bh_index=0,
         # top level flags:
         print_black_hole_info=True,
         dump_particle_histograms=False,
         radial_profiles=True,
-        general_maps=False,
-        BLR_analysis=True,
+        general_maps=True,
+        BLR_analysis=False,
         ):
     """ THIS IS THE MAIN FUNCTION TO CHANGE... """
     if output_dir is None:
@@ -265,41 +265,24 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
         # load snapshot/simulation
         log_timing(f"loading snapshot at {filepath} ...")
         snap = jaba.load(filepath, verbose=True)
-        
-        ### black holes ###
-        if print_black_hole_info:
-            print('black hole info:')
-            blackholetype = 'PartType3' #'PartType5'
-            massname = 'Masses' # 'BH_Mass'
-            print('  masses (Msun)  : {}'.format((snap[blackholetype,massname]).to('Msun'))) # *snap.metadata['UnitMass_In_CGS']*u.g if BH_Mass ? 
-            #print('  mdots (Msun/yr): {}'.format(snap[blackholetype,'BH_Mdot'].to('Msun/yr')))
-            print('  radius (pc)    : {}'.format(np.sqrt(np.sum(snap[blackholetype,'Coordinates'].to('pc')**2, axis=1))))
-            print('  speed (km/s)   : {}'.format(np.sqrt(np.sum(snap[blackholetype,'Velocities'].to('km/s')**2, axis=1))))
-
-        # center around particle
-        if center_around_BH:
-            bh_parttype=3
-            bh_index=0
-            cpos = snap.pos[bh_parttype][bh_index][np.newaxis, :].to('pc')
-            cvel = snap.vel[bh_parttype][bh_index][np.newaxis, :].to('km/s')
-            rsink = (snap.metadata['Fixed_ForceSoftening_Keplerian_Kernel_Extent'][bh_parttype]*snap.metadata['UnitLength_In_CGS']*u.cm).to('pc')
-            snap.center_on(bh_parttype, bh_index)
-            snap.faceon(10**np.mean(np.log10(snap.r(bh_index).to('pc').value))*u.pc)
-            print(f"centered around BH particle {bh_index} of type {bh_parttype} at {cpos} with velocity {cvel} and sink radius {rsink}...")
-        else:
-            cpos = np.zeros((1,3))*u.pc
-            cvel = np.zeros((1,3))*u.km/u.s
-            rsink = 0.0*u.pc
 
         # assign meaning to particle types
-        snap.particle_type_meanings = { # temp, should be inferred
+        particle_type_meanings = { # temp, should be inferred
             'PartType0':'gas', 
             'PartType1':'dm',  # high res dm
             'PartType2':'lo_res_dm', 
-            'PartType3':'bh', 
             'PartType4':'star', # ssp
-            'PartType5':'sink_stars'
         }
+        if bh_parttype == 5:
+            particle_type_meanings['PartType5'] = 'bh' 
+            particle_type_meanings['PartType3'] = 'sink_stars' 
+        elif bh_parttype == 3:
+            particle_type_meanings['PartType3'] = 'bh' 
+            particle_type_meanings['PartType5'] = 'sink_stars' 
+        else:
+            particle_type_meanings['PartType{}'.format(bh_parttype)] = 'bh' 
+
+        snap.particle_type_meanings = particle_type_meanings
         particle_type_meaning_strs_dict = { # put somehow in snapshot? first is subscript and second is full name
             'gas': ('gas', 'Gas'),
             'dm': ('DM', 'Dark Matter'),
@@ -313,6 +296,28 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
         particle_types = [pt for pt in snap.particle_types if (snap._resolve_particle_type_number(pt) != bh_parttype if center_around_BH else True)]
         particle_type_meaning_subscript_strs = [particle_type_meaning_strs_dict[snap._resolve_particle_type_meaning(pt)][0] for pt in particle_types]
         particle_type_meaning_full_strs = [particle_type_meaning_strs_dict[snap._resolve_particle_type_meaning(pt)][1] for pt in particle_types]
+
+        ### black holes ###
+        if print_black_hole_info:
+            print('black hole info:')
+            massname = 'Masses' # 'BH_Mass'
+            print('  masses (Msun)  : {}'.format((snap[bh_parttype, massname]).to('Msun'))) # *snap.metadata['UnitMass_In_CGS']*u.g if BH_Mass ? 
+            #print('  mdots (Msun/yr): {}'.format(snap[bh_parttype,'BH_Mdot'].to('Msun/yr')))
+            print('  radius (pc)    : {}'.format(np.sqrt(np.sum(snap[bh_parttype,'Coordinates'].to('pc')**2, axis=1))))
+            print('  speed (km/s)   : {}'.format(np.sqrt(np.sum(snap[bh_parttype,'Velocities'].to('km/s')**2, axis=1))))
+
+        # center around particle
+        if center_around_BH:
+            cpos = snap.pos[bh_parttype][bh_index][np.newaxis, :].to('pc')
+            cvel = snap.vel[bh_parttype][bh_index][np.newaxis, :].to('km/s')
+            rsink = (snap.metadata['Fixed_ForceSoftening_Keplerian_Kernel_Extent'][bh_parttype]*snap.metadata['UnitLength_In_CGS']*u.cm).to('pc')
+            snap.center_on(bh_parttype, bh_index)
+            snap.faceon(10**np.mean(np.log10(snap.r(bh_index).to('pc').value))*u.pc)
+            print(f"centered around BH particle {bh_index} of type {bh_parttype} at {cpos} with velocity {cvel} and sink radius {rsink}...")
+        else:
+            cpos = np.zeros((1,3))*u.pc
+            cvel = np.zeros((1,3))*u.km/u.s
+            rsink = 0.0*u.pc
 
         ### particle histograms ###
         num_hist_bins = 50
@@ -356,7 +361,7 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
         if radial_profiles:
             # quick settings for this section
             xmin = rsink.to('pc').value
-            xmax = np.max(snap.r(0).to('pc').value)*0.033  # fraction of max radius to use as outer edge of radial profile (must be set manually) 
+            xmax = np.max(snap.r(0).to('pc').value)*0.99  # fraction of max radius to use as outer edge of radial profile (must be set manually) 
             force_regular_log_major_ticks=True
             force_minor_ticks=True
 
@@ -400,12 +405,13 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
             jv.loglog(*zip(*_s), label=tuple(particle_type_meaning_full_strs), ls='-', color=None, out=profile_dir+'surface_density_{}.png'.format(snap.name), xlabel='Cylindrical radius $R$ (pc)', ylabel=r'Surface density $\Sigma$ ($M_\odot$/pc$^2$)', xmin=xmin, xmax=xmax, force_regular_log_major_ticks=force_regular_log_major_ticks, force_minor_ticks=force_minor_ticks)
 
             # circular velocity profile (v_circ = sqrt(GM(<r)/r)), with contributions from gas, stars, BH, DM
-            _s = [get_profile_with_defaults(snap.r(pt).to('pc'), snap.mass[pt].to('Msun'), kind='D') for pt in particle_types] # M(<r) for each particle type
+            _all_particle_types = (particle_types if not center_around_BH else ['bh',] + list(particle_types))
+            _s = [get_profile_with_defaults(snap.r(pt).to('pc'), snap.mass[pt].to('Msun'), kind='D') for pt in _all_particle_types] # M(<r) for each particle type
+            _s_names = list([particle_type_meaning_strs_dict[snap._resolve_particle_type_meaning(pt)][1] for pt in _all_particle_types])
             _s = [(x, np.sqrt(c.G * y / (x * u.pc))) for x, y in _s]
-            _s_names = list(particle_type_meaning_full_strs)
-            if center_around_BH:
-                _s.insert(0, (_s[0][0], np.sqrt(c.G * snap.mass['bh'].to('Msun') / (_s[0][0] * u.pc))))
-                _s_names.insert(0, 'Black Hole')
+            #if center_around_BH:
+                #_s.insert(0, (_s[0][0], np.sqrt(c.G * snap.mass['bh', bh_index].to('Msun') / (_s[0][0] * u.pc)))) # does not account for multiple bhs
+                #_s_names.insert(0, 'Black Hole')
             _s.insert(0, (_s[0][0], np.sum([y for x, y in _s], axis=0)))
             _s_names.insert(0, 'Total')
             jv.loglog(*zip(*_s), label=tuple(n for n in _s_names), ls='-', color=None, out=profile_dir+'vcirc_{}.png'.format(snap.name), xlabel='Spherical radius $r$ (pc)', ylabel=r'Circular velocity $v_\mathrm{circ}$ (km/s)', xmin=xmin, xmax=xmax, force_regular_log_major_ticks=force_regular_log_major_ticks, force_minor_ticks=force_minor_ticks)
@@ -422,25 +428,73 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
             jv.loglog(_rbin, _zrms/_rbin, ls='-', color='black', out=profile_dir+'aspect_ratio_{}.png'.format(snap.name), xlabel='Spherical radius $r$ (pc)', ylabel=r'Aspect ratio $H/R$', xmin=xmin, xmax=xmax, force_regular_log_major_ticks=force_regular_log_major_ticks, force_minor_ticks=force_minor_ticks, ymin=1e-3, ymax=2)
 
 
+            LS = ['-', '--', '-.', ':', (0, (6, 1)), (0, (3, 1, 1, 1)), (0, (3, 5, 1, 5)), (0, (3, 10, 1, 10)), (0, (3, 10, 1, 10, 1, 10))]
+
             ### thermochemistry plots ### (e.g. fig 10 of FIF1)
             # temperature profile (gas, radiation, dust)
-            _a = get_profile_with_defaults(snap.r(0).to('pc'), snap.temp0.to('K'), kind='A') # gas temperature
-            _b = get_profile_with_defaults(snap.r(0).to('pc'), snap['PartType0','IRBand_Radiation_Temperature'].to('K'), kind='A') # radiation temperature
-            _c = get_profile_with_defaults(snap.r(0).to('pc'), snap['PartType0','Dust_Temperature'].to('K'), kind='A') # dust temperature
-            jv.loglog(*zip(_a, _b, _c), label=('Gas', 'Radiation', 'Dust'), ls=('-', '--', '-.'), color=None, out=profile_dir+'temp_{}.png'.format(snap.name), xlabel='Spherical radius $r$ (pc)', ylabel=r'Temperature $T$ (K)', xmin=xmin, xmax=xmax, force_regular_log_major_ticks=force_regular_log_major_ticks, force_minor_ticks=force_minor_ticks)
-
+            if 'Temperature' in snap['PartType0'] or 'InternalEnergy' in snap['PartType0']:
+                if 'Temperature' not in snap['PartType0'] and 'InternalEnergy' in snap['PartType0']: # TODO, should really put this in snapshot class
+                    temp = ((5/3-1.0)*snap[('PartType0', 'InternalEnergy')]*c.m_p/c.k_B).to('K')
+                else:
+                    temp = snap.temp0.to('K')
+                _s = [get_profile_with_defaults(snap.r(0).to('pc'), temp, kind='A'),] # gas temperature
+                labels= ['Gas',]
+                if 'IRBand_Radiation_Temperature' in snap['PartType0']:
+                    _s.append(get_profile_with_defaults(snap.r(0).to('pc'), snap['PartType0','IRBand_Radiation_Temperature'].to('K'), kind='A')) # radiation temperature
+                    labels.append('Radiation')
+                else:
+                    print('Radiation temperature dataset not found in snapshot, skipping radiation temperature profile plot.')
+                if 'Dust_Temperature' in snap['PartType0']:
+                    _s.append(get_profile_with_defaults(snap.r(0).to('pc'), snap['PartType0','Dust_Temperature'].to('K'), kind='A')) # dust temperature
+                    labels.append('Dust')
+                else:
+                    print('Dust temperature dataset not found in snapshot, skipping dust temperature profile plot.')
+                jv.loglog(*zip(*_s), label=tuple(labels), ls=tuple(LS[:len(labels)]), color=None, out=profile_dir+'temp_{}.png'.format(snap.name), xlabel='Spherical radius $r$ (pc)', ylabel=r'Temperature $T$ (K)', xmin=xmin, xmax=xmax, force_regular_log_major_ticks=force_regular_log_major_ticks, force_minor_ticks=force_minor_ticks)
+            else:
+                print('Temperature dataset not found in snapshot, skipping temperature profile plot.')  
 
             # species fraction profile (free e, HII, HI, H2, metals)
-            Z = snap.metals0[:, 0] # mass fraction of all metals
-            Y = snap.metals0[:, 1] # mass fraction of helium
-            X = (1-Y-Z) # mass fraction of hydrogen
-            fe = snap['PartType0','ElectronAbundance']*X
-            _a = get_profile_with_defaults(snap.r(0).to('pc'), fe, kind='A') # free electron fraction
-            _b = get_profile_with_defaults(snap.r(0).to('pc'), snap['PartType0','HII'], kind='A') # HII fraction
-            _c = get_profile_with_defaults(snap.r(0).to('pc'), snap['PartType0','NeutralHydrogenAbundance'], kind='A') # HI fraction
-            _d = get_profile_with_defaults(snap.r(0).to('pc'), snap['PartType0','MolecularMassFraction'], kind='A') # H2 fraction
-            _e = get_profile_with_defaults(snap.r(0).to('pc'), Z, kind='A') # metals fraction
-            jv.loglog(*zip(_a, _b, _c, _d, _e), label=('Free Electrons', 'Ionized H (HII)', 'Atomic H (HI)', 'Molecular H (H2)', 'Metallicity (Z)'), ls=('-', '--', '-.', ':', (0, (6, 1))), color=None, out=profile_dir+'species_{}.png'.format(snap.name), xlabel='Spherical radius $r$ (pc)', ylabel=r'Species mass fraction', xmin=xmin, xmax=xmax, force_regular_log_major_ticks=force_regular_log_major_ticks, force_minor_ticks=force_minor_ticks, ymin=1e-5, ymax=1.4)
+            has_metals = False # TODO: should really move this stuff to the snapshot class to check
+            if 'Metallicity' in snap['PartType0']:
+                has_metals = True
+                Z = snap.metals0[:, 0] # mass fraction of all metals
+                Y = snap.metals0[:, 1] # mass fraction of helium
+                X = (1-Y-Z) # mass fraction of hydrogen
+            if 'ElectronAbundance' in snap['PartType0']:
+                has_electronabundance = True
+                fe = snap['PartType0','ElectronAbundance']*X
+            
+            if has_metals or has_electronabundance:
+                _s = []
+                labels = []
+                if has_electronabundance:
+                    _s.append(get_profile_with_defaults(snap.r(0).to('pc'), fe, kind='A')) # free electron fraction
+                    labels.append('Free Electrons')
+                else:
+                    print('Electron abundance dataset not found in snapshot, skipping free electron fraction profile plot.')
+                if 'HII' in snap['PartType0']:
+                    _s.append(get_profile_with_defaults(snap.r(0).to('pc'), snap['PartType0','HII'], kind='A')) # HII fraction
+                    labels.append('Ionized H (HII)')
+                else:
+                    print('HII dataset not found in snapshot, skipping ionized hydrogen fraction profile plot.')
+                if 'NeutralHydrogenAbundance' in snap['PartType0']:
+                    _s.append(get_profile_with_defaults(snap.r(0).to('pc'), snap['PartType0','NeutralHydrogenAbundance'], kind='A')) # HI fraction
+                    labels.append('Atomic H (HI)')
+                else:
+                    print('Neutral hydrogen abundance dataset not found in snapshot, skipping neutral hydrogen fraction profile plot.')
+                if 'MolecularMassFraction' in snap['PartType0']:
+                    _s.append(get_profile_with_defaults(snap.r(0).to('pc'), snap['PartType0','MolecularMassFraction'], kind='A')) # H2 fraction
+                    labels.append('Molecular H (H2)')
+                else:
+                    print('Molecular mass fraction dataset not found in snapshot, skipping molecular hydrogen fraction profile plot.')
+                if has_metals:
+                    _s.append(get_profile_with_defaults(snap.r(0).to('pc'), Z, kind='A')) # metals fraction
+                    labels.append('Metallicity (Z)')
+                else:
+                    print('Metallicity dataset not found in snapshot, skipping metallicity fraction profile plot.')
+                jv.loglog(*zip(*_s), label=tuple(labels), ls=tuple(LS[:len(labels)]), color=None, out=profile_dir+'species_{}.png'.format(snap.name), xlabel='Spherical radius $r$ (pc)', ylabel=r'Species mass fraction', xmin=xmin, xmax=xmax, force_regular_log_major_ticks=force_regular_log_major_ticks, force_minor_ticks=force_minor_ticks, ymin=1e-5, ymax=1.4)
+            else:
+                print('No species datasets found in snapshot, skipping species fraction profile plot.')
 
             # magnetic field profile (B mag rms, B_r, B_theta, B_phi)
             B = snap['PartType0','MagneticField'].to('G_cgs').value
@@ -452,7 +506,7 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
             jv.loglog(*zip(_a, _b, _c, _d), label=(r'$\langle|B|\rangle^{1/2}$', 'Radial', 'Polodial', 'Toroidal'), ls=('-', '--', '-.', ':'), color=None, out=profile_dir+'Bfield_{}.png'.format(snap.name), xlabel='Spherical radius $r$ (pc)', ylabel=r'Magnetic field strength $B$ (Gauss)', xmin=xmin, xmax=xmax, force_regular_log_major_ticks=force_regular_log_major_ticks, force_minor_ticks=force_minor_ticks)
 
             # pressure/stress profile (kinetic, magnetic, thermal, radiation)
-            Pkin = ((snap.dens0 * np.linalg.norm(snap.vel0.cgs, axis=1)**2)).to('g cm**-1 s**-2') 
+            Pkin = ((snap.dens0 * np.linalg.norm(snap.vel0.cgs, axis=1)**2)).to('g cm**-1 s**-2')
             Pmag = np.sum(snap['PartType0','MagneticField'].to('G_cgs').cgs**2, axis=1)/(8*np.pi)
             Pth = ((5./3.-1.)*snap.dens0*snap['PartType0','InternalEnergy']).to('g cm**-1 s**-2')
             Prad = ((1./3.) * np.sum(snap['PartType0','PhotonEnergy'],axis=1) * snap.dens0/snap.mass0).to('g cm**-1 s**-2') # assume isotropic for now
@@ -491,27 +545,32 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
         ### general maps ###
         if general_maps:
             log_timing('making general maps...')
-            maps_dir = output_dir + 'profiles/'
+            maps_dir = output_dir + 'maps/'
             os.makedirs(maps_dir, exist_ok=True)
             # temp: use pynbody for maps (TODO: port over jaba implementation)
             import pynbody
             import matplotlib.pyplot as plt
             with warnings.catch_warnings(): # for now, suppress pynbody warnings about log10 non-positive values
                 warnings.simplefilter("ignore", category=RuntimeWarning)
-            
+
                 s = pynbody.new(gas=len(snap.mass0))
                 s.gas['pos'] = np.array(snap.pos0.to('pc'), dtype=np.float64)
                 s.gas['mass'] = np.array(snap.mass0.to('Msun'), dtype=np.float64)
                 s.gas['smooth'] = np.array(snap.smooth0.to('pc'), dtype=np.float64)
                 s.gas['vel'] = np.array(snap.vel0.to('km/s'), dtype=np.float64)
-                s.gas['temp'] = np.array(snap.temp0.to('K'), dtype=np.float64)
-
                 s.physical_units()
                 s['pos'].units = 'pc'
                 s['mass'].units = 'Msol'
                 s['smooth'].units = 'pc'
                 s['vel'].units = 'km s**-1'
-                s['temp'].units = 'K'
+                if 'Temperature' in snap['PartType0'] or 'InternalEnergy' in snap['PartType0']:
+                    if 'Temperature' not in snap['PartType0'] and 'InternalEnergy' in snap['PartType0']: # TODO, should really put this in snapshot class
+                        temp = ((5/3-1.0)*snap[('PartType0', 'InternalEnergy')]*c.m_p/c.k_B).to('K')
+                    else:
+                        temp = snap.temp0.to('K')
+                    has_temp=True
+                    s.gas['temp'] = np.array(temp.to('K'), dtype=np.float64)
+                    s['temp'].units = 'K'
 
                 incls = [0, 90]#[0, 30, 60, 90, 120, 150, 180]
                 for inclination in incls:
@@ -535,14 +594,15 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
                             plt.savefig(maps_dir +'inc{}/map_dens_{}_oom{}_inc{}.png'.format(inclination, snap.name, oom, inclination))
                             plt.clf()
 
-                            _map2 = pynbody.plot.sph.image(s.gas, qty='temp', width=r_pc, units="K", noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
-                            plt.title('gas')
-                            plt.imshow(np.log10(_map2), extent=extent, origin='lower')
-                            plt.colorbar(label=r'log mean gas temperature $T$ [$K$]')
-                            plt.xlabel('x [pc]')
-                            plt.ylabel('y [pc]')
-                            plt.savefig(maps_dir +'inc{}/map_temp_{}_oom{}_inc{}.png'.format(inclination, snap.name, oom, inclination))
-                            plt.clf()
+                            if has_temp:
+                                _map2 = pynbody.plot.sph.image(s.gas, qty='temp', width=r_pc, units="K", noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
+                                plt.title('gas')
+                                plt.imshow(np.log10(_map2), extent=extent, origin='lower')
+                                plt.colorbar(label=r'log mean gas temperature $T$ [$K$]')
+                                plt.xlabel('x [pc]')
+                                plt.ylabel('y [pc]')
+                                plt.savefig(maps_dir +'inc{}/map_temp_{}_oom{}_inc{}.png'.format(inclination, snap.name, oom, inclination))
+                                plt.clf()
 
                             s.gas['Pmag'] = np.sum(snap['PartType0', 'MagneticField']**2, axis=1)/(8*np.pi)
                             s.gas['Pmag'].units = 'K' # only to escape Gauss/unitless issue for plotting purposes
@@ -555,16 +615,17 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
                             plt.savefig(maps_dir +'inc{}/map_Pmag_{}_oom{}_inc{}.png'.format(inclination, snap.name, oom, inclination))
                             plt.clf()
 
-                            s.gas['plasma beta'] = np.array(snap.dens0.to('g cm**-3')/(2*1.67262192e-24)*c.k_B.to('erg K**-1')*snap.temp0.to('K'), dtype=np.float64)/np.array(s.gas['Pmag'], dtype=np.float64)
-                            s.gas['plasma beta'].units = 'K' # only to escape unitless issue for plotting purposes
-                            _map4 = pynbody.plot.sph.image(s.gas, qty='plasma beta', width=r_pc, units='K', noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
-                            plt.title('gas')
-                            plt.imshow(np.log10(_map4), extent=extent, origin='lower')
-                            plt.colorbar(label=r'log mean gas $\beta_\mathrm{plasma}$')
-                            plt.xlabel('x [pc]')
-                            plt.ylabel('y [pc]')
-                            plt.savefig(maps_dir +'inc{}/map_plasmabeta_{}_oom{}_inc{}.png'.format(inclination, snap.name, oom, inclination))
-                            plt.clf()
+                            if has_temp:
+                                s.gas['plasma beta'] = np.array(snap.dens0.to('g cm**-3')/(2*1.67262192e-24)*c.k_B.to('erg K**-1')*temp, dtype=np.float64)/np.array(s.gas['Pmag'], dtype=np.float64)
+                                s.gas['plasma beta'].units = 'K' # only to escape unitless issue for plotting purposes
+                                _map4 = pynbody.plot.sph.image(s.gas, qty='plasma beta', width=r_pc, units='K', noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
+                                plt.title('gas')
+                                plt.imshow(np.log10(_map4), extent=extent, origin='lower')
+                                plt.colorbar(label=r'log mean gas $\beta_\mathrm{plasma}$')
+                                plt.xlabel('x [pc]')
+                                plt.ylabel('y [pc]')
+                                plt.savefig(maps_dir +'inc{}/map_plasmabeta_{}_oom{}_inc{}.png'.format(inclination, snap.name, oom, inclination))
+                                plt.clf()
 
 
         ### broad line region ###
@@ -577,7 +638,6 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
                 cpos
                 cvel
             except NameError:
-                bh_parttype = 3
                 cpos = snap['PartType%d' % bh_parttype, 'Coordinates'][0][np.newaxis, :].to('pc')
                 cvel = snap['PartType%d' % bh_parttype, 'Velocities'][0][np.newaxis, :].to('km/s')
 
@@ -892,16 +952,94 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
         log_timing()
 
 
+def timeseries_info(filepaths, output_dir=None, bh_parttype=3, bh_index=0):
+    if output_dir is None:
+        output_dir='.'
+    output_dir+='/'
+
+    massname = 'Masses' # 'BH_Mass'
+    
+    # sort snaps by time (TODO: do this in its own snaphot class)
+    max_bhs=0
+    times = []
+    snaps = []
+    nfiles = len(filepaths)
+    for i, filepath in enumerate(filepaths):
+        snap = jaba.load(filepath)#, verbose=True)
+        snaps.append(snap)
+        times.append(snap.metadata['Time'] * snap.metadata['UnitLength_In_CGS'] / snap.metadata['UnitVelocity_In_CGS'] * 3.17098e-8)
+        max_bhs = max(max_bhs, len(snap[bh_parttype, massname]))
+    times, snaps = zip(*sorted(zip(times, snaps)))
+    times = np.array(times) * u.yr
+    print('max black holes:', max_bhs)
+
+    with jv.style_context(None):  # e.g. 'ApJ', 1
+        jv.plt.rcParams['axes.prop_cycle'] = jv.plt.cycler(color=jv.plt.cm.Set1.colors) # TODO add to style_context
+
+        has_mdot = False
+        bh_masses_Msun   = np.zeros((nfiles, max_bhs))
+        bh_mdots_Msunpyr = np.zeros((nfiles, max_bhs))
+        for i, snap in enumerate(snaps): # eventually load with some Snapshot class
+            print(f'{snap.name} ({i+1}/{nfiles}): time {times[i]}')
+            ### black holes ###
+            print('black hole info:')
+            print('  masses (Msun)  : {}'.format((snap[bh_parttype,massname]).to('Msun'))) # *snap.metadata['UnitMass_In_CGS']*u.g if BH_Mass ? 
+            print('  mdots (Msun/yr): {}'.format(snap[bh_parttype,'BH_Mdot'].to('Msun/yr')))
+            print('  radius (pc)    : {}'.format(np.sqrt(np.sum(snap[bh_parttype,'Coordinates'].to('pc')**2, axis=1))))
+            print('  speed (km/s)   : {}'.format(np.sqrt(np.sum(snap[bh_parttype,'Velocities'].to('km/s')**2, axis=1))))
+            ids_sorted = np.argsort(snap[bh_parttype, 'ParticleIDs'])
+            bh_masses_Msun[i] = snap[bh_parttype,massname][ids_sorted].to('Msun').value
+            if 'BH_Mdot' in snap[bh_parttype]:
+                has_mdot = True
+                bh_mdots_Msunpyr[i] = snap[bh_parttype,'BH_Mdot'][ids_sorted].to('Msun/yr').value
+        
+        for k in range(max_bhs):
+            jv.scatter(times.to('yr').value, bh_masses_Msun.T[k]) 
+        jv.plot(times.to('yr').value, tuple(bh_masses_Msun.T), ls='-', xlabel='Time (yr)', ylabel='BH Masses (Msun)', ylog=True, out=output_dir+'bh_masses.png')
+        if has_mdot:
+            for k in range(max_bhs):
+                jv.scatter(times.to('yr').value, bh_mdots_Msunpyr.T[k])
+            jv.plot(times.to('yr').value, tuple(bh_mdots_Msunpyr.T), ls='-', xlabel='Time (yr)', ylabel=r"BH $\dot{M}$ (Msun yr$^{-1}$)", ylog=True, out=output_dir+'bh_mdots.png')
+
+            Medd_est = (4*np.pi * c.G * u.Msun/(0.1 * 0.4*u.cm**2/u.g * c.c) * bh_masses_Msun).to('Msun/yr').value # estimated Eddington accretion rate (with efficiency of 0.1)
+            for k in range(max_bhs):
+                jv.scatter(times.to('yr').value, bh_mdots_Msunpyr.T[k]/Medd_est.T[k])
+            jv.plot(times.to('yr').value, tuple(bh_mdots_Msunpyr.T/Medd_est.T), ls='-', xlabel='Time (yr)', ylabel=r"BH $\dot{M}$ / $\dot{M}_\mathrm{Edd}$", ylog=True, out=output_dir+'bh_mdots_over_edd.png')
+
+
+    log_timing()
+    
+
+
 def main():
     log_timing(f"getting filearguments...")
-    filepath, analysis_dir, debug_flag = get_file_arguments(str, str, int, fill_empties_with_none=True)
+    filepath, analysis_dir, bh_parttype, bh_index = get_file_arguments(str, str, int, int, fill_empties_with_none=True)
+    if bh_parttype is None:
+        bh_parttype=3
+    if bh_index is None:
+        bh_index=0
     
     assert filepath is not None, 'Need to enter a filepath.'
     if analysis_dir is None:
         print('no analysis output directory specified, defaulting to output in local folder..')
         analysis_dir='.'
-    print('debug flag {} -> {}'.format(debug_flag, bool(debug_flag)))
-    quick_check(filepath, output_dir=analysis_dir, debugging=bool(debug_flag))
+    debug_flag=None
+    print('debug flag: {}'.format(bool(debug_flag))) # todo - remove debug flag and replace with quick check options
+    print('bh particle type: {}'.format(bh_parttype)) # todo - remove debug flag and replace with quick check options
+    print('bh index: {}'.format(bh_index)) # todo - remove debug flag and replace with quick check options
+    if os.path.exists(filepath):
+        quick_check(filepath, output_dir=analysis_dir, debugging=bool(debug_flag), bh_parttype=bh_parttype, bh_index=bh_index)
+    else:
+        filepaths = glob.glob(filepath + "_*.hdf5", recursive=True)
+        if len(filepaths) < 1:
+            print(f'no filepaths found in form "{filepaths}" ... exiting')
+            return 1
+        if len(filepaths) > 1:
+            timeseries_info(filepaths, output_dir=analysis_dir, bh_parttype=bh_parttype, bh_index=bh_index)
+        else:
+            print('only one filepath found, ignoring timeseries outputs...')
+        for fp in filepaths:
+            quick_check(fp, output_dir=analysis_dir, debugging=bool(debug_flag), bh_parttype=bh_parttype, bh_index=bh_index)
 
 if __name__ == '__main__':
     main()
