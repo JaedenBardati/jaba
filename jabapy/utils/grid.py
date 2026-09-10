@@ -139,7 +139,7 @@ def bin_particles_direct(pos, *qty, mins=None, maxs=None, dims=None, ret_bins=Fa
     assert len(pos.shape) == 2, 'Invalid pos format.'
 
     if isinstance(qty, tuple): # if qty is a tuple of arrays, stack them together
-        qty = qty[0] if len(qty) == 1 else np.column_stack(qty)
+        qty = qty[0] if len(qty) == 1 else np.column_stack(qty)  # if you get an error here, double check you are passing keyword arguments (e.g. mins, maxs, dims) as keyword arguments, not positional arguments
     qty = np.ascontiguousarray(qty)
     assert len(qty.shape) == 1 or len(qty.shape) == 2, 'Invalid qty format.'
     assert pos.shape[0] == qty.shape[0], 'Not matching number of particles in pos and qty.'
@@ -162,7 +162,7 @@ def bin_particles_direct(pos, *qty, mins=None, maxs=None, dims=None, ret_bins=Fa
     maxs = np.max(_pos, axis=0) if maxs is None else np.ascontiguousarray(maxs) # default to the max of the positions
     assert len(maxs.shape) == 1, 'Invalid maxs format.'
     assert maxs.shape[0] == dims.shape[0], 'Non-matching maxs and dims shape.'
-    
+
     if nthreads is None:
         if pos.shape[0] > _npart_multithread_threshold: # if there are a lot of particles, use parallel version
             nthreads = -1
@@ -189,7 +189,7 @@ def bin_particles_direct(pos, *qty, mins=None, maxs=None, dims=None, ret_bins=Fa
         with numba_threads(nthreads):
             _bin_particles_direct_parallel(_pos, _qty, mins, maxs, dims, strides, grid, nthreads)
     grid = grid.reshape(tuple(dims)) if M == 1 else grid.reshape((M,) + tuple(dims))
-
+    
     if not ret_bins:
         return grid
     

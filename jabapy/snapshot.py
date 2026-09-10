@@ -1154,9 +1154,9 @@ def _add_convenience_properties(cls):
         g = grid.bin_particles_direct(
             pos.value[:, dirs], 
             qty_arr.value, 
-            mins, 
-            maxs, 
-            (dim, dim)
+            mins=mins, 
+            maxs=maxs, 
+            dims=(dim, dim)
         )
         if logscale:
             g = np.log10(g)
@@ -1372,5 +1372,6 @@ def load(filepath, verbose=False):
     if verbose:
         print(f"Loading GIZMO snapshot from file {filepath} ...")
     return load_gizmo(filepath, debugging=verbose)
+
 
 
