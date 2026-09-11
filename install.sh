@@ -658,7 +658,7 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             #start the ssh-agent if on Linux and not already started
             if [[ "$SYSTEM_TYPE" != "Darwin" ]]; then
                 printf "if [ -z \"\$SSH_AUTH_SOCK\" ] ; then\n"
-                printf "    eval \$(ssh-agent -s > /dev/null)\n"
+                printf "    eval \"\$(ssh-agent -s)\" > /dev/null\n"
                 printf "fi\n"
             fi
         fi
