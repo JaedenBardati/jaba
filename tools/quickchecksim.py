@@ -308,18 +308,24 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
 
         # center around particle
         if center_around_BH:
-            if len(snap.mass[bh_parttype]) == 1 or bh_id is None:
-                bh_index = 0 # choose the only bh
-            elif bh_id is None:
-                bh_index = np.argmax(snap.mass[bh_parttype]) # choose most massive black hole
+            if bh_id is None:
+                bh_index = int(np.argmax(snap.mass[bh_parttype])) # choose most massive black hole
+                print(f'chose to center on most massive BH particle ({bh_index}) of type {bh_parttype} with mass {snap.mass[bh_parttype][bh_index].to("Msun")}')
             else:
-                bh_index = np.argwhere(snap['ParticleIDs', bh_id] == bh_id)[0,0] # find bh based on id # TODO generalize
+                bh_index = int(np.argwhere(snap['ParticleIDs', bh_id] == bh_id)[0,0]) # find bh based on id # TODO generalize
             cpos = snap.pos[bh_parttype][bh_index][np.newaxis, :].to('pc')
             cvel = snap.vel[bh_parttype][bh_index][np.newaxis, :].to('km/s')
             rsink = (snap.metadata['Fixed_ForceSoftening_Keplerian_Kernel_Extent'][bh_parttype]*snap.metadata['UnitLength_In_CGS']*u.cm).to('pc')
-            snap.center_on(bh_parttype, bh_index)
-            snap.faceon(10**np.mean(np.log10(snap.r(bh_index).to('pc').value))*u.pc)
-            print(f"centered around BH particle {bh_index} of type {bh_parttype} at {cpos} with velocity {cvel} and sink radius {rsink}...")
+            #print('DEBUG', snap.pos0[0].to('pc'), snap.pos[bh_parttype][0].to('pc'), snap.vel0[0].to('km/s'), snap.vel[bh_parttype][0].to('km/s'))
+            #print('DEBUG', snap.absolute_centers, snap.transformation_matrix)
+            snap.center_on(bh_parttype, bh_index)#, verbose=True)
+            #print(f"centered around BH particle {bh_index} of type {bh_parttype} at {cpos} with velocity {cvel} and sink radius {rsink}...")
+            #print('DEBUG', snap.pos0[0].to('pc'), snap.pos[bh_parttype][0].to('pc'), snap.vel0[0].to('km/s'), snap.vel[bh_parttype][0].to('km/s'))
+            #print('DEBUG', snap.absolute_centers, snap.transformation_matrix)
+            snap.faceon(radius=10**np.mean(np.log10(snap.r(0).to('pc').value))*u.pc)#, verbose=True)
+            #print(f"aligned BH particle {bh_index} of type {bh_parttype}...")
+            #print('DEBUG', snap.pos0[0].to('pc'), snap.pos[bh_parttype][0].to('pc'), snap.vel0[0].to('km/s'), snap.vel[bh_parttype][0].to('km/s'))
+            #print('DEBUG', snap.absolute_centers, snap.transformation_matrix)
         else:
             cpos = np.zeros((1,3))*u.pc
             cvel = np.zeros((1,3))*u.km/u.s

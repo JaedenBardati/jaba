@@ -135,25 +135,23 @@ class HDF5_Snapshot:
             setattr(self, _attr, data)
         return getattr(self, _attr)
 
-    @staticmethod
-    def _resolve_particle_type_name(key, noerror=False):
+    def _resolve_particle_type_name(self, key, noerror=False):
         # get particle type name version
-        if isinstance(key, int) and key < len(HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES): # TODO: change to self._SUPPORTED_PARTICLES_TYPES / not static method - or better self.particle_types ?
-            return HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES[key]
-        elif isinstance(key, str) and key in HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES:
+        if isinstance(key, int) or isinstance(key, np.integer) and key < len(self._SUPPORTED_PARTICLES_TYPES): # TODO: check if in self.particle_types in this function?
+            return self._SUPPORTED_PARTICLES_TYPES[key]
+        elif isinstance(key, str) and key in self._SUPPORTED_PARTICLES_TYPES:
             return key
         elif not noerror:
-            raise KeyError('Unrecognized particle type key "{}". Must be an integer index of or a string in the list of supported particle types: {}'.format(key, HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES))
+            raise KeyError('Unrecognized particle type key "{}". Must be an integer index of or a string in the list of supported particle types: {}'.format(key, self._SUPPORTED_PARTICLES_TYPES))
 
-    @staticmethod
-    def _resolve_particle_type_number(key, noerror=False):
+    def _resolve_particle_type_number(self, key, noerror=False):
         # get particle type number version
-        if isinstance(key, int) and (0 <= key and key < len(HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES)):
+        if isinstance(key, int) or isinstance(key, np.integer) and (0 <= key and key < len(self._SUPPORTED_PARTICLES_TYPES)):
             return key
-        elif isinstance(key, str) and key in HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES:
-            return int(str(key)[-1]) #specfic O(1) solution to GIZMO/GADGET only, but in general can be: HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES.index(key), though this is O(n) so TODO should switch to bimap between str and int types
+        elif isinstance(key, str) and key in self._SUPPORTED_PARTICLES_TYPES:
+            return int(str(key)[-1]) #specfic O(1) solution to GIZMO/GADGET only, but in general can be: self._SUPPORTED_PARTICLES_TYPES.index(key), though this is O(n) so TODO should switch to bimap between str and int types
         elif not noerror:
-            raise KeyError('Unrecognized particle type key "{}". Must be an integer index of or a string in the list of supported particle types: {}'.format(key, HDF5_Snapshot._SUPPORTED_PARTICLES_TYPES))
+            raise KeyError('Unrecognized particle type key "{}". Must be an integer index of or a string in the list of supported particle types: {}'.format(key, self._SUPPORTED_PARTICLES_TYPES))
 
     def __getitem__(self, key):
         # particle type?
@@ -664,7 +662,7 @@ def _add_convenience_properties(cls):
         setattr(cls, _name, prop)
         
         # also support old snap.pos0 format (deprecated)
-        for _parttype in cls._SUPPORTED_PARTICLES_TYPES:
+        for i, _parttype in enumerate(cls._SUPPORTED_PARTICLES_TYPES):
             @property
             def prop2(self, _name=_name, _parttype=_parttype):
                 return getattr(self, _name).__getitem__(_parttype) # make sure the standard dataset object is created and loaded + pass on to __getitem__ to handle
@@ -674,7 +672,7 @@ def _add_convenience_properties(cls):
             @prop2.deleter
             def prop2(self, _name=_name, _parttype=_parttype):
                 getattr(self, _name).__delitem__(_parttype)  # make sure the standard dataset object is created and loaded + pass on to __delitem__ to handle
-            setattr(cls, _name + str(cls._resolve_particle_type_number(_parttype)), prop2)
+            setattr(cls, _name + str(i), prop2)
 
     ## Add properties to standardize particle type meanings
     @property
@@ -747,10 +745,10 @@ def _add_convenience_properties(cls):
 
     ## Add method to handle general spatial transformations and effect on other tensor-like datasets
 
-    def transform(self, center=None, vcenter=None, z=None, y=None, x=None, zdir=None, ydir=None, xdir=None, absolute=True, in_radians=False, strictness=2, verbose=False):
+    def transform(self, center=None, vcenter=None, z=None, y=None, x=None, zdir=None, ydir=None, xdir=None, absolute=False, in_radians=False, strictness=2, verbose=False):
         """
         Center around position and velocity, then rotate the snapshot to a given orientation. 
-        Center and rotation are given in terms of the current snapshot orientation, unless absolute=True, in which case they are given in terms of the original snapshot orientation.
+        If absolute=False (default), the center and rotation are given in terms of the current snapshot orientation. If absolute=True, they are given in terms of the original snapshot orientation.
         This will only be applied upon next loading of each transformed dataset.
         """
         if center is None and vcenter is None and z is None and y is None and x is None and zdir is None and ydir is None and xdir is None:
@@ -805,8 +803,8 @@ def _add_convenience_properties(cls):
         if verbose:
             print('Other datasets will be transformed on the fly when loaded.')    
 
-        # handle derived datasets - for now just delete them so that they will be recalculated later
-        for key in self._loaded_derived_datasets.keys():
+        # handle derived datasets - for now just delete them so that they will be recalculated later, TODO eventually add this functionality into its class
+        for key in self._loaded_derived_datasets.copy().keys():
             if verbose:
                 print(f"Removing derived dataset {key} so that it will be recalculated when next called...")
             del self._loaded_derived_datasets[key]
@@ -859,8 +857,7 @@ def _add_convenience_properties(cls):
     ## Add some extra convenience methods for specific transformation operations
 
     def absolute_transform(self, *args, **kwargs):
-        self.reset_transform()
-        return self.transform(*args, **kwargs)
+        return self.transform(*args, absolute=True, **kwargs)
     setattr(cls, 'absolute_transform', absolute_transform)
 
     # translation in position space
@@ -1236,7 +1233,7 @@ def _add_convenience_properties(cls):
                                     leafsize=leafsize, compact_nodes=(not fast_build), balanced_tree=(not fast_build), copy_data=False))
             elif isinstance(dim, str) and dim in ['x', 'y', 'z']:
                 dim_idx = 'xyz'.index(dim)
-            elif isinstance(dim, int):
+            elif isinstance(dim, int) or isinstance(dim, np.integer):
                 setattr(self, _name, 
                         cKDTree_wUnits(getattr(self, 'pos' + str(self._resolve_particle_type_number(particle_type)))[:, dim], 
                                     leafsize=leafsize, compact_nodes=(not fast_build), balanced_tree=(not fast_build), copy_data=False))
