@@ -11,12 +11,12 @@ def comoving_distance(z, z0=0.0, h=c.DEFAULT_h, Ode0=c.DEFAULT_Ode0, Om0=c.DEFAU
     E = lambda z: 1/np.sqrt(Ode0 + Om0*(1+z)**3 + Or0*(1+z)**4 + Ok0*(1+z)**2)
     result, error = quad(E, z0, z)
     if error > tol*result:
-        raise Exception("Error ({}) is too high compared to the inferred distance")
+        raise Exception("Error is too high compared to the inferred distance (ratio is {})".format(error/result))
     return d_H*result
 
-def transverse_comoving_distance(z, z0=0.0, h=c.DEFAULT_h, Ode0=c.DEFAULT_Ode0, Om0=c.DEFAULT_Om0, Or0=c.DEFAULT_Or0, Ok0=c.DEFAULT_Ok0):
+def transverse_comoving_distance(z, z0=0.0, h=c.DEFAULT_h, Ode0=c.DEFAULT_Ode0, Om0=c.DEFAULT_Om0, Or0=c.DEFAULT_Or0, Ok0=c.DEFAULT_Ok0, tol=1e-3):
     '''Returns the transverse comoving distance at the given redshift z in Mpc. This integrates to find answer, so do not call too many times.'''
-    d_C = comoving_distance(z, z0=z0, h=h, Ode0=Ode0, Om0=Om0, Or0=Or0, Ok0=Ok0)
+    d_C = comoving_distance(z, z0=z0, h=h, Ode0=Ode0, Om0=Om0, Or0=Or0, Ok0=Ok0, tol=tol)
     if Ok0 == 0.0:
         return d_C
     d_H = 2997.92*u.Mpc/h # in Mpc
@@ -27,20 +27,29 @@ def transverse_comoving_distance(z, z0=0.0, h=c.DEFAULT_h, Ode0=c.DEFAULT_Ode0, 
         curve_factor = d_H/root_Ok0 * np.sin(root_Ok0 * (d_C/d_H).to(u.dimensionless_unscaled))
     return curve_factor*d_C
 
-def luminosity_distance(z, z0=0.0, h=c.DEFAULT_h, Ode0=c.DEFAULT_Ode0, Om0=c.DEFAULT_Om0, Or0=c.DEFAULT_Or0, Ok0=c.DEFAULT_Ok0):
+def luminosity_distance(z, z0=0.0, h=c.DEFAULT_h, Ode0=c.DEFAULT_Ode0, Om0=c.DEFAULT_Om0, Or0=c.DEFAULT_Or0, Ok0=c.DEFAULT_Ok0, tol=1e-3):
     '''Returns the luminosity distance at the given redshift z in Mpc. This integrates to find answer, so do not call too many times.'''
-    d_M = transverse_comoving_distance(z, z0=z0, h=h, Ode0=Ode0, Om0=Om0, Or0=Or0, Ok0=Ok0)
+    d_M = transverse_comoving_distance(z, z0=z0, h=h, Ode0=Ode0, Om0=Om0, Or0=Or0, Ok0=Ok0, tol=tol)
     return d_M*(1+z)
 
-def angular_diameter_distance(z, z0=0.0, h=c.DEFAULT_h, Ode0=c.DEFAULT_Ode0, Om0=c.DEFAULT_Om0, Or0=c.DEFAULT_Or0, Ok0=c.DEFAULT_Ok0):
+def angular_diameter_distance(z, z0=0.0, h=c.DEFAULT_h, Ode0=c.DEFAULT_Ode0, Om0=c.DEFAULT_Om0, Or0=c.DEFAULT_Or0, Ok0=c.DEFAULT_Ok0, tol=1e-3):
     '''Returns the angular diameter distance at the given redshift z in Mpc. This integrates to find answer, so do not call too many times.'''
-    d_M = transverse_comoving_distance(z, z0=z0, h=h, Ode0=Ode0, Om0=Om0, Or0=Or0, Ok0=Ok0)
+    d_M = transverse_comoving_distance(z, z0=z0, h=h, Ode0=Ode0, Om0=Om0, Or0=Or0, Ok0=Ok0, tol=tol)
     return d_M/(1+z)
 
-def angular_scale(z, z0=0.0, h=c.DEFAULT_h, Ode0=c.DEFAULT_Ode0, Om0=c.DEFAULT_Om0, Or0=c.DEFAULT_Or0, Ok0=c.DEFAULT_Ok0):
+def angular_scale(z, z0=0.0, h=c.DEFAULT_h, Ode0=c.DEFAULT_Ode0, Om0=c.DEFAULT_Om0, Or0=c.DEFAULT_Or0, Ok0=c.DEFAULT_Ok0, tol=1e-3):
     '''Returns the angular scale at the given redshift z in kpc/arcsec. This integrates to find answer, so do not call too many times.'''
-    d_A = angular_diameter_distance(z, z0=z0, h=h, Ode0=Ode0, Om0=Om0, Or0=Or0, Ok0=Ok0)
+    d_A = angular_diameter_distance(z, z0=z0, h=h, Ode0=Ode0, Om0=Om0, Or0=Or0, Ok0=Ok0, tol=tol)
     return (d_A/(206265*u.arcsec)).to('kpc/arcsec')
+
+def time_since_bigbang(z, h=c.DEFAULT_h, Ode0=c.DEFAULT_Ode0, Om0=c.DEFAULT_Om0, Or0=c.DEFAULT_Or0, Ok0=c.DEFAULT_Ok0, tol=1e-3):
+    '''Returns the time since the Big Bang at the given redshift z in Gyr. This integrates to find answer, so do not call too many times.'''
+    inv_H0 = 1/(100*u.km/u.s/u.Mpc*h)
+    E = lambda z: 1/((1+z)*np.sqrt(Ode0 + Om0*(1+z)**3 + Or0*(1+z)**4 + Ok0*(1+z)**2))
+    result, error = quad(E, z, np.inf)
+    if error > tol*result:
+        raise Exception("Error is too high compared to the inferred time (ratio is {})".format(error/result))
+    return inv_H0*result
 
 # aliases 
 dC = comoving_distance

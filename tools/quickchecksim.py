@@ -326,6 +326,8 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
             #print(f"aligned BH particle {bh_index} of type {bh_parttype}...")
             #print('DEBUG', snap.pos0[0].to('pc'), snap.pos[bh_parttype][0].to('pc'), snap.vel0[0].to('km/s'), snap.vel[bh_parttype][0].to('km/s'))
             #print('DEBUG', snap.absolute_centers, snap.transformation_matrix)
+            if not np.allclose(snap.pos[bh_parttype][bh_index].to('pc').value, 0.0):
+                assert False, (f"BH particle {bh_index} of type {bh_parttype} is not at the origin after centering! (pos = {snap.pos[bh_parttype][bh_index].to('pc')})")
         else:
             cpos = np.zeros((1,3))*u.pc
             cvel = np.zeros((1,3))*u.km/u.s
@@ -418,7 +420,7 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
 
             # circular velocity profile (v_circ = sqrt(GM(<r)/r)), with contributions from gas, stars, BH, DM
             _all_particle_types = (particle_types if not center_around_BH else ['bh',] + list(particle_types))
-            _s = [get_profile_with_defaults(snap.r(pt).to('pc'), snap.mass[pt].to('Msun'), kind='D') for pt in _all_particle_types] # M(<r) for each particle type
+            _s = [get_profile_with_defaults(snap.r(pt).to('pc') if np.linalg.norm(snap.r(pt).to('pc').value) >= rsink.to('pc').value else u.pc*np.array([rsink.to('pc').value,]*len(snap.r(pt))), snap.mass[pt].to('Msun'), kind='D') for pt in _all_particle_types] # M(<r) for each particle type
             _s_names = list([particle_type_meaning_strs_dict[snap._resolve_particle_type_meaning(pt)][1] for pt in _all_particle_types])
             _s = [(x, np.sqrt(c.G * y * u.Msun / (x * u.pc)).to('km/s')) for x, y in _s]
             #if center_around_BH:
@@ -431,10 +433,13 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
             jv.loglog(*zip(*_s), label=tuple(n for n in _s_names), ls='-', color=None, out=profile_dir+'vcirc_{}.png'.format(snap.name), xlabel='Spherical radius $r$ (pc)', ylabel=r'Circular velocity $v_\mathrm{circ}$ (km/s)', xmin=xmin, xmax=xmax, force_regular_log_major_ticks=force_regular_log_major_ticks, force_minor_ticks=force_minor_ticks)
             
             # accretion rate 
-            _vr = np.einsum('ij,ij->i', snap.vel0.to('km/s').value, (snap.pos0 / snap.r(0)[:, np.newaxis]).to(1).value)  # radial velocity
+            _vr = np.einsum('ij,ij->i', (snap.vel0/snap.r(0)[..., None]).to('yr**-1').value, (snap.pos0 / snap.r(0)[:, np.newaxis]).to(1).value)  # radial velocity
             _in, _out = _vr < 0, _vr >= 0
             Mdot_in = get_profile_with_defaults(snap.r(0)[_in].to('pc'), snap.mass0[_in].to('Msun') * np.abs(_vr[_in]), kind='C', force_dx=True) # dM/dR
             Mdot_out = get_profile_with_defaults(snap.r(0)[_out].to('pc'), snap.mass0[_out].to('Msun') * np.abs(_vr[_out]), kind='C', force_dx=True) # dM/dR
+            if center_around_BH:
+                Mdot_edd = (2.2e-8 * snap.mass['bh'].to('Msun')[bh_index]/u.yr).to('Msun/yr').value # Eddington accretion rate assuming 10% radiative efficiency
+            jv.plot([xmin, xmax], [Mdot_edd, Mdot_edd], ls=':', color='black', label=r'$\dot{M}_\mathrm{edd}$')
             jv.loglog(*zip(Mdot_in, Mdot_out), label=('Inflow', 'Outflow'), ls=('-', '--'), color=('C0', 'C1'), out=profile_dir+'mdot_{}.png'.format(snap.name), xlabel='Spherical radius $r$ (pc)', ylabel=r'Accretion rate $\dot{M}$ ($M_\odot$/yr)', xmin=xmin, xmax=xmax, force_regular_log_major_ticks=force_regular_log_major_ticks, force_minor_ticks=force_minor_ticks)
 
             # aspect ratio (fig 5 of FIF zoom-out draft)
@@ -623,44 +628,69 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
                             _map = pynbody.plot.sph.image(s.gas, width=r_pc, units="m_p cm**-2", noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
                             plt.title('gas')
                             plt.imshow(np.log10(_map), extent=extent, origin='lower')
-                            plt.colorbar(label=r'log gas column density $\int \rho dz$ [$m_p cm^{-2}$]')
+                            plt.colorbar(label=r"log gas column density $\int \rho dz$ [$m_p cm^{-2}$]")
                             plt.xlabel('x [pc]')
                             plt.ylabel('y [pc]')
                             plt.savefig(maps_dir +'inc{}/map_dens_{}_oom{}_inc{}.png'.format(inclination, snap.name, oom, inclination))
                             plt.clf()
 
-                            if has_temp:
-                                _map2 = pynbody.plot.sph.image(s.gas, qty='temp', width=r_pc, units="K", noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
-                                plt.title('gas')
-                                plt.imshow(np.log10(_map2), extent=extent, origin='lower')
-                                plt.colorbar(label=r'log mean gas temperature $T$ [$K$]')
-                                plt.xlabel('x [pc]')
-                                plt.ylabel('y [pc]')
-                                plt.savefig(maps_dir +'inc{}/map_temp_{}_oom{}_inc{}.png'.format(inclination, snap.name, oom, inclination))
-                                plt.clf()
-
-                            s.gas['Pmag'] = np.sum(snap['PartType0', 'MagneticField']**2, axis=1)/(8*np.pi)
-                            s.gas['Pmag'].units = 'K' # only to escape Gauss/unitless issue for plotting purposes
-                            _map3 = pynbody.plot.sph.image(s.gas, qty='Pmag', width=r_pc, units="K", noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
-                            plt.title('gas')
-                            plt.imshow(np.log10(_map3), extent=extent, origin='lower')
-                            plt.colorbar(label=r'log mean magnetic field pressure $P_\mathrm{mag}$ [dyn/cm$^2$]')
+                            _cut = [0, 1] if incls == 0 else [1, 2]
+                            bins, _starmass_map = bin_particles_direct(snap.pos['star'].to('pc').value[:, _cut], 
+                                snap.mass['star'].to('Msun').value, mins=[extent[0], extent[2]], maxs=[extent[1], extent[3]], dims=[500, 500], ret_bins=True)
+                            dx = bins[0][1] - bins[0][0]
+                            _starsurfdens_map = _starmass_map/(dx*dx)
+                            plt.title('star')
+                            plt.imshow(np.log10(_starsurfdens_map), extent=extent, origin='lower')
+                            plt.colorbar(label=r"log star surface density $\Sigma$ [$M_\odot \mathrm{pc}^{-2}$]")
                             plt.xlabel('x [pc]')
                             plt.ylabel('y [pc]')
-                            plt.savefig(maps_dir +'inc{}/map_Pmag_{}_oom{}_inc{}.png'.format(inclination, snap.name, oom, inclination))
+                            plt.savefig(maps_dir +'inc{}/map_starsurfdens_{}_oom{}_inc{}.png'.format(inclination, snap.name, oom, inclination))
                             plt.clf()
 
-                            if has_temp:
-                                s.gas['plasma beta'] = np.array(snap.dens0.to('g cm**-3')/(2*1.67262192e-24)*c.k_B.to('erg K**-1')*temp, dtype=np.float64)/np.array(s.gas['Pmag'], dtype=np.float64)
-                                s.gas['plasma beta'].units = 'K' # only to escape unitless issue for plotting purposes
-                                _map4 = pynbody.plot.sph.image(s.gas, qty='plasma beta', width=r_pc, units='K', noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
-                                plt.title('gas')
-                                plt.imshow(np.log10(_map4), extent=extent, origin='lower')
-                                plt.colorbar(label=r'log mean gas $\beta_\mathrm{plasma}$')
-                                plt.xlabel('x [pc]')
-                                plt.ylabel('y [pc]')
-                                plt.savefig(maps_dir +'inc{}/map_plasmabeta_{}_oom{}_inc{}.png'.format(inclination, snap.name, oom, inclination))
-                                plt.clf()
+                            bins, _dmmass_map = bin_particles_direct(snap.pos['dm'].to('pc').value[:, _cut], 
+                                snap.mass['dm'].to('Msun').value, mins=[extent[0], extent[2]], maxs=[extent[1], extent[3]], dims=[500, 500], ret_bins=True)
+                            dx = bins[0][1] - bins[0][0]
+                            _dmsurfdens_map = _dmmass_map/(dx*dx)
+                            plt.title('dark matter')
+                            plt.imshow(np.log10(_dmsurfdens_map), extent=extent, origin='lower')
+                            plt.colorbar(label=r"log dark matter surface density $\Sigma$ [$M_\odot \mathrm{pc}^{-2}$]")
+                            plt.xlabel('x [pc]')
+                            plt.ylabel('y [pc]')
+                            plt.savefig(maps_dir +'inc{}/map_dmsurfdens_{}_oom{}_inc{}.png'.format(inclination, snap.name, oom, inclination))
+                            plt.clf()
+
+                            # if has_temp:
+                            #     _map2 = pynbody.plot.sph.image(s.gas, qty='temp', width=r_pc, units="K", noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
+                            #     plt.title('gas')
+                            #     plt.imshow(np.log10(_map2), extent=extent, origin='lower')
+                            #     plt.colorbar(label=r'log mean gas temperature $T$ [$K$]')
+                            #     plt.xlabel('x [pc]')
+                            #     plt.ylabel('y [pc]')
+                            #     plt.savefig(maps_dir +'inc{}/map_temp_{}_oom{}_inc{}.png'.format(inclination, snap.name, oom, inclination))
+                            #     plt.clf()
+
+                            # s.gas['Pmag'] = np.sum(snap['PartType0', 'MagneticField']**2, axis=1)/(8*np.pi)
+                            # s.gas['Pmag'].units = 'K' # only to escape Gauss/unitless issue for plotting purposes
+                            # _map3 = pynbody.plot.sph.image(s.gas, qty='Pmag', width=r_pc, units="K", noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
+                            # plt.title('gas')
+                            # plt.imshow(np.log10(_map3), extent=extent, origin='lower')
+                            # plt.colorbar(label=r'log mean magnetic field pressure $P_\mathrm{mag}$ [dyn/cm$^2$]')
+                            # plt.xlabel('x [pc]')
+                            # plt.ylabel('y [pc]')
+                            # plt.savefig(maps_dir +'inc{}/map_Pmag_{}_oom{}_inc{}.png'.format(inclination, snap.name, oom, inclination))
+                            # plt.clf()
+
+                            # if has_temp:
+                            #     s.gas['plasma beta'] = np.array(snap.dens0.to('g cm**-3')/(2*1.67262192e-24)*c.k_B.to('erg K**-1')*temp, dtype=np.float64)/np.array(s.gas['Pmag'], dtype=np.float64)
+                            #     s.gas['plasma beta'].units = 'K' # only to escape unitless issue for plotting purposes
+                            #     _map4 = pynbody.plot.sph.image(s.gas, qty='plasma beta', width=r_pc, units='K', noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
+                            #     plt.title('gas')
+                            #     plt.imshow(np.log10(_map4), extent=extent, origin='lower')
+                            #     plt.colorbar(label=r'log mean gas $\beta_\mathrm{plasma}$')
+                            #     plt.xlabel('x [pc]')
+                            #     plt.ylabel('y [pc]')
+                            #     plt.savefig(maps_dir +'inc{}/map_plasmabeta_{}_oom{}_inc{}.png'.format(inclination, snap.name, oom, inclination))
+                            #     plt.clf()
 
 
         ### broad line region ###
@@ -730,7 +760,7 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
             jv.loglog(*zip(*_s), label=tuple(particle_type_meaning_full_strs + [r'BLR ($L_\text{BLR} > \langle L\rangle$)', r'BLR ($L_\text{BLR} > \langle L\rangle + 3\sigma_L$)']), ls='-', color=None, out=blr_profile_dir+'surface_density_{}.png'.format(snap.name), xlabel='Cylindrical radius $R$ (pc)', ylabel=r'Surface density $\Sigma$ ($M_\odot$/pc$^2$)', xmin=xmin, xmax=xmax, force_regular_log_major_ticks=force_regular_log_major_ticks, force_minor_ticks=force_minor_ticks)
             
             # accretion rate 
-            _vr = np.einsum('ij,ij->i', snap.vel0.to('km/s').value, (snap.pos0 / snap.r(0)[:, np.newaxis]).to(1).value)  # radial velocity
+            _vr = np.einsum('ij,ij->i', (snap.vel0/snap.r(0)[..., None]).to('yr**-1').value, (snap.pos0 / snap.r(0)[:, np.newaxis]).to(1).value)
             _in, _out = _vr < 0, _vr >= 0
             Mdot_in = get_profile_with_defaults(snap.r(0)[_in].to('pc'), snap.mass0[_in].to('Msun') * np.abs(_vr[_in]), kind='C', force_dx=True) # dM/dR
             Mdot_out = get_profile_with_defaults(snap.r(0)[_out].to('pc'), snap.mass0[_out].to('Msun') * np.abs(_vr[_out]), kind='C', force_dx=True) # dM/dR
@@ -1019,7 +1049,8 @@ def timeseries_info(filepaths, output_dir=None, bh_parttype=3):
             ### black holes ###
             print('black hole info:')
             print('  masses (Msun)  : {}'.format((snap[bh_parttype,massname]).to('Msun'))) # *snap.metadata['UnitMass_In_CGS']*u.g if BH_Mass ? 
-            print('  mdots (Msun/yr): {}'.format(snap[bh_parttype,'BH_Mdot'].to('Msun/yr')))
+            if 'BH_Mdot' in snap[bh_parttype]:
+                print('  mdots (Msun/yr): {}'.format(snap[bh_parttype,'BH_Mdot'].to('Msun/yr')))
             print('  radius (pc)    : {}'.format(np.sqrt(np.sum(snap[bh_parttype,'Coordinates'].to('pc')**2, axis=1))))
             print('  speed (km/s)   : {}'.format(np.sqrt(np.sum(snap[bh_parttype,'Velocities'].to('km/s')**2, axis=1))))
             ids_sorted = np.argsort(snap[bh_parttype, 'ParticleIDs'])

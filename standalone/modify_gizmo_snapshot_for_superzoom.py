@@ -15,6 +15,7 @@ def remake_snap_for_zoom_in(
     r_cut_phys_kpc     = np.inf,
     set_time_to_zero   = True,  # zero out the time or convert it? will set to zero no matter what if cosmological sim  
     modify_snap        = False, # set to False to debug
+    binary             = False, #if binary bh system
     ):
     """
     YOU SHOULD BACKUP THE FILE BEFOREHAND!! assumes b unit is gauss
@@ -30,18 +31,21 @@ def remake_snap_for_zoom_in(
     with h5py.File(snapshot,'r+') as F:
         ## load data for our special particle
         P0=F[special_type]
-        if special_id is None: # convert from id to index
-            special_index = np.argmax(P0['Masses']) # by default choose most massive one
+        if binary:
+            special_indices = slice(None)
+        elif special_id is None: # convert from id to index
+            special_indices = [np.argmax(P0['Masses']),] # by default choose most massive one
         else:
             assert special_id in P0['ParticleIDs'], 'special_id not found in the particle list'
-            special_index = np.where(P0['ParticleIDs'] == special_id)[0,0]
+            special_indices = [np.where(P0['ParticleIDs'] == special_id)[0,0],]
         del special_id
-        cen0=np.array(P0['Coordinates'][special_index], dtype=np.float64)
-        print('special particle location =', cen0)
-        vel0=np.array(P0['Velocities'][special_index], dtype=np.float64)
-        acc0=np.array(P0['Acceleration'][special_index], dtype=np.float64)
+        cen0 = np.sum(np.array(P0['Coordinates'], dtype=np.float64)*np.array(P0['Masses'], dtype=np.float64)[special_indices, None], axis=0)/np.sum(np.array(P0['Masses'], dtype=np.float64)[special_indices])
+        print('special particle COM location =', cen0)
+        vel0=np.sum(np.array(P0['Velocities'], dtype=np.float64)*np.array(P0['Masses'], dtype=np.float64)[special_indices, None], axis=0)/np.sum(np.array(P0['Masses'], dtype=np.float64)[special_indices])
+        #acc0=np.sum(np.array(P0['Acceleration'][special_indices], dtype=np.float64)*np.array(P0['Masses'][special_indices], dtype=np.float64)[..., None], axis=1)/np.sum(np.array(P0['Masses'][special_indices], dtype=np.float64))
+        print(cen0, vel0, special_indices)
         if 'Potential' in list(P0.keys()):
-            phi0=np.array(P0['Potential'][special_index], dtype=np.float64)
+            phi0=np.array(P0['Potential'][special_indices], dtype=np.float64)
         else:
             phi0 = 0.0
         
@@ -79,7 +83,7 @@ def remake_snap_for_zoom_in(
                 if list(P.keys()) == []:
                     print('> skipping because this type has no datasets')
                     continue
-                Pc = np.array(P['Coordinates'], dtype=np.float64)  - np.array(P0['Coordinates'][0], dtype=np.float64)
+                Pc = np.array(P['Coordinates'], dtype=np.float64)  - cen0
                 r = ascale * np.sqrt(np.sum(Pc*Pc,axis=1))
                 print(r.shape)
                 ok = np.where(r < r_cut)[0]
@@ -97,7 +101,7 @@ def remake_snap_for_zoom_in(
                             P_tmp = P_tmp - vel0
                             P_tmp *= np.sqrt(ascale)*unit_conv_v
                         if((q=='Acceleration') or (q=='HydroAcceleration') or (q=='RadiativeAcceleration')): 
-                            P_tmp = P_tmp - acc0
+                            P_tmp = P_tmp #- acc0
                             P_tmp *= unit_conv_v / unit_conv_t; 
                         if(q=='Potential'): 
                             P_tmp = P_tmp - phi0
@@ -167,7 +171,7 @@ def remake_snap_for_zoom_in(
 
                         if key_P == special_type and remove_other_BHs:
                             # remove all BHs other than special index
-                            P_tmp = P_tmp[[special_index,], ...]
+                            P_tmp = P_tmp[special_indices, ...]
                             npart_new[j] = 1
 
                         P.create_dataset(q,data=P_tmp)
@@ -198,11 +202,11 @@ def remake_snap_for_zoom_in(
                 print('copying relevant datasets from', special_type, 'to', special_type_out)
                 for q in ['Acceleration', 'Coordinates', 'Masses', 'Potential', 'Velocities', 'ParticleIDs', 'ParticleIDGenerationNumber', 'ParticleChildIDsNumber']: 
                     if(q == 'Masses'): # exception for Masses which should be taken to be the BH mass
-                        P0_tmp = np.array(P0[bh_mass], dtype=np.float64)
+                        P0_tmp = np.array(P0[bh_mass], dtype=np.float64)[special_indices]
                     elif q in list(P0.keys()): # transfer from type 5
-                        P0_tmp = np.array(P0[q], dtype=np.float64)  # type 5 element
+                        P0_tmp = np.array(P0[q], dtype=np.float64)[special_indices]  # type 5 element
                     else:  # default to zero with warning
-                        P0_tmp = np.zeros(npart_new[3], dtype=np.float64)
+                        P0_tmp = np.zeros(npart_new[3], dtype=np.float64)[special_indices]
                         warnings.warn('Set type 3 dataset "{}" to zero (size {}) by default (not found in type 5)'.format(q, npart_new[3]))
                     P.create_dataset(q, data=P0_tmp)
                 

@@ -10,6 +10,7 @@ from .utils import grid
 from .utils import visual as jv 
 from .utils import datastructures as jds
 from .analysis import dynamics as dyn
+from .analysis import cosmology as cosmo
 
 ###
 ### Structure for Snapshot Class Construction:
@@ -418,7 +419,8 @@ class Basic_GIZMO_Snapshot(HDF5_Snapshot):
     Omega_Radiation = OmegaRadiation
 
     def scale_factor_to_time(self, scale_factor):  # move to cosmology module when added
-        raise NotImplementedError('Need to add cosmological integration to program.')
+        #raise NotImplementedError('Need to add cosmological integration to program.')
+        return cosmo.scale_factor_to_time(scale_factor, h=self.HubbleParam, Ode0=self.OmegaLambda, Om0=self.OmegaMatter, Or0=self.OmegaRadiation, Ok0=0.0)
 
     @property
     def UnitSystem_In_CGS(self):
@@ -485,17 +487,17 @@ class Basic_GIZMO_Snapshot(HDF5_Snapshot):
                 'length': self._UNIT_LENGTH_IN_CGS*u.cm, # length factor to convert from code units to cm
                 'velocity': self._UNIT_VELOCITY_IN_CGS*u.cm/u.s, # velocity factor to convert from code units to cm/s
             }
-            if self.cosmological:
-                # convert to physical units
-                raise NotImplementedError('Need to add cosmological integration to program.')
+            # if self.Cosmological:
+            #     # convert to physical units
+            #     raise NotImplementedError('Need to add cosmological integration to program.')
                 # a_scale = self.ScaleFactor
                 # MASS_physical = MASS_code
                 # LENGTH_physical = LENGTH_code * a_scale
                 # VELOCITY_physical = VELOCITY_code * np.sqrt(a_scale)
                 # INTERNAL_ENERGY_physical = INTERNAL_ENERGY_code
                 # DENSITY_physical = DENSITY_code / a_scale**3
-                self._UnitSystem_In_CGS['length'] *= self.ScaleFactor
-                self._UnitSystem_In_CGS['velocity'] *= np.sqrt(self.ScaleFactor) 
+                # self._UnitSystem_In_CGS['length'] *= self.ScaleFactor
+                # self._UnitSystem_In_CGS['velocity'] *= np.sqrt(self.ScaleFactor) 
                 # also note that time unit is really a scale factor now
 
         return self._UnitSystem_In_CGS
