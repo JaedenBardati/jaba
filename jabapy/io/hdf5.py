@@ -82,6 +82,7 @@ def _combine_output_multi_file_dict_of_arrays(func):
                     combined_dict[key] = [value,]
             for key, value_list in combined_dict.items():
                 combined_dict[key] = np.concatenate(value_list, axis=0)
+            return combined_dict
         else:
             return outs
     return _wrapper
@@ -144,10 +145,10 @@ def get_metadata(file_path):
     return all_data
 
 @_combine_output_multi_file_arrays
-def get_dataset(file_path, dataset_path, keepViewObject=False, _idx=None):
-    '''Returns the desired dataset as a numpy array (or HDF5View object if enabled).'''
+def get_dataset(file_path, dataset_path, _idx=None):
+    '''Returns the desired dataset as a numpy array.'''
     with h5py.File(file_path, 'r') as f:
-        data = np.array(f[dataset_path]) if not keepViewObject else f[dataset_path]
+        data = np.array(f[dataset_path])
     return data
 
 @_combine_output_multi_file_dict_of_arrays
