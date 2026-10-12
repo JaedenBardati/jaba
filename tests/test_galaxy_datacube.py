@@ -20,7 +20,7 @@ def write_header(file):
                         UnitVelocity_In_CGS=(u.kpc/u.yr).to(u.cm/u.s))
 
 
-class TestGalaxyContinuum(unittest.TestCase):
+class TestGalaxyDatacube(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory(); self.addCleanup(directory.cleanup)
         path = Path(directory.name)/'snapshot.hdf5'
@@ -51,9 +51,9 @@ class TestGalaxyContinuum(unittest.TestCase):
         self.assertTrue(np.all((image['rgb'] >= 0) & (image['rgb'] <= 1)))
         np.testing.assert_allclose(image['extent'].to_value(u.kpc), [-.5, .5, -.5, .5])
 
-    def test_continuum_shapes_attenuation_and_chunking(self):
-        one = galaxy.galaxy_continuum(self.snap, frequency_chunk_size=1, chunk_size=1, **self.kw)
-        all_channels = galaxy.galaxy_continuum(self.snap, frequency_chunk_size=3, chunk_size=10, **self.kw)
+    def test_datacube_shapes_attenuation_and_chunking(self):
+        one = galaxy.galaxy_datacube(self.snap, frequency_chunk_size=1, chunk_size=1, **self.kw)
+        all_channels = galaxy.galaxy_datacube(self.snap, frequency_chunk_size=3, chunk_size=10, **self.kw)
         self.assertEqual(one['particle_counts']['stars'], 2)
         self.assertEqual(one['particle_counts']['gas'], 2)
         for name in one['datacubes']:
@@ -65,13 +65,13 @@ class TestGalaxyContinuum(unittest.TestCase):
 
     def test_prepared_grid_reuse_without_snapshot_or_resources(self):
         preparation = {key: value for key, value in self.kw.items() if key not in ('npix', 'N_NGB', 'workers')}
-        prepared = galaxy.prepare_galaxy_continuum(self.snap, **preparation)
+        prepared = galaxy.prepare_galaxy_datacube(self.snap, **preparation)
         emission, density = prepared['emission'].copy(), prepared['dust_density'].copy()
-        expected = galaxy.galaxy_continuum(self.snap, **self.kw)
+        expected = galaxy.galaxy_datacube(self.snap, **self.kw)
         with patch.object(h5py, 'File', side_effect=AssertionError('Snapshot read during rendering')), \
              patch.object(galaxy, 'load_resource', side_effect=AssertionError('Resource read during rendering')):
-            actual = galaxy.raytrace_galaxy_continuum(prepared, npix=2, workers=1)
-            higher = galaxy.raytrace_galaxy_continuum(prepared, npix=3, step_fraction=.15, workers=1)
+            actual = galaxy.raytrace_galaxy_datacube(prepared, npix=2, workers=1)
+            higher = galaxy.raytrace_galaxy_datacube(prepared, npix=3, step_fraction=.15, workers=1)
         np.testing.assert_array_equal(prepared['emission'], emission)
         np.testing.assert_array_equal(prepared['dust_density'], density)
         self.assertEqual(higher['datacubes']['absorption'].shape, (3, 3, 3))
@@ -98,7 +98,7 @@ class TestGalaxyContinuum(unittest.TestCase):
         expected_density = histogram(dust_positions, dust_masses)/volume
         stellar = histogram(positions[:2], [1., 2.])*4*u.Lsun.to(u.erg/u.s)/(4*np.pi)
         for chunk, storage in [(chunk, storage) for chunk in (1, 3, 100) for storage in ('dense', 'compact')]:
-            prepared = galaxy.prepare_galaxy_continuum(self.snap, chunk_size=chunk, storage=storage, **kw)
+            prepared = galaxy.prepare_galaxy_datacube(self.snap, chunk_size=chunk, storage=storage, **kw)
             if prepared['field_indices'] is not None:
                 for key in ('emission', 'dust_density'): prepared[key] = prepared[key][prepared['field_indices']]
             self.assertEqual(prepared['particle_counts'], dict(gas=4, stars=2, population_clipped=0, wind_excluded=2))
@@ -112,7 +112,7 @@ class TestGalaxyContinuum(unittest.TestCase):
     def test_wavelength_range_and_datacube_units(self):
         kw = {key: value for key, value in self.kw.items() if key != 'lam'}
         for spacing, sample in [('linear', np.linspace), ('log', np.geomspace)]:
-            result = galaxy.galaxy_continuum(self.snap, wavelength_range=[.3, 1.2]*u.micron,
+            result = galaxy.galaxy_datacube(self.snap, wavelength_range=[.3, 1.2]*u.micron,
                                              n_wavelength=9, wavelength_spacing=spacing, **kw)
             np.testing.assert_allclose(result['wavelength'].to_value(u.micron), sample(.3, 1.2, 9))
             self.assertEqual(set(result['datacubes']), {'pure_emission', 'absorption', 'effective'})
@@ -123,61 +123,61 @@ class TestGalaxyContinuum(unittest.TestCase):
                 band = galaxy.rad.integrate_bandpass(result['wavelength'], cube)
                 expected = np.trapezoid(cube.value, result['wavelength'].value, axis=-1)*cube.unit*result['wavelength'].unit
                 np.testing.assert_allclose(band, expected, rtol=1e-13)
-        with self.assertRaises(ValueError): galaxy.galaxy_continuum(self.snap, wavelength_range=[1., .3], **kw)
-        with self.assertRaises(ValueError): galaxy.galaxy_continuum(self.snap, n_wavelength=1, **kw)
-        with self.assertRaises(ValueError): galaxy.galaxy_continuum(self.snap, wavelength_range=[.3, 1.2], **self.kw)
+        with self.assertRaises(ValueError): galaxy.galaxy_datacube(self.snap, wavelength_range=[1., .3], **kw)
+        with self.assertRaises(ValueError): galaxy.galaxy_datacube(self.snap, n_wavelength=1, **kw)
+        with self.assertRaises(ValueError): galaxy.galaxy_datacube(self.snap, wavelength_range=[.3, 1.2], **self.kw)
 
     def test_compact_storage_matches_dense_geometry_and_spectra(self):
         kw = {key: value for key, value in self.kw.items() if key not in ('npix', 'N_NGB', 'workers')}
         for dims in (4, (4, 5, 6)):
-            dense = galaxy.prepare_galaxy_continuum(self.snap, **dict(kw, grid_shape=dims), storage='dense')
-            compact = galaxy.prepare_galaxy_continuum(self.snap, **dict(kw, grid_shape=dims), storage='compact',
+            dense = galaxy.prepare_galaxy_datacube(self.snap, **dict(kw, grid_shape=dims), storage='dense')
+            compact = galaxy.prepare_galaxy_datacube(self.snap, **dict(kw, grid_shape=dims), storage='compact',
                                                       frequency_chunk_size=1, chunk_size=1)
             self.assertLess(compact['emission'].size, dense['emission'].size)
             for key in ('emission', 'dust_density'):
                 np.testing.assert_allclose(compact[key][compact['field_indices']], dense[key], rtol=1e-13, atol=0)
                 np.testing.assert_array_equal(compact[key][0], 0)
             for neighbors in (4, 8):
-                a = galaxy.raytrace_galaxy_continuum(dense, npix=3, N_NGB=neighbors)
-                b = galaxy.raytrace_galaxy_continuum(compact, npix=3, N_NGB=neighbors)
+                a = galaxy.raytrace_galaxy_datacube(dense, npix=3, N_NGB=neighbors)
+                b = galaxy.raytrace_galaxy_datacube(compact, npix=3, N_NGB=neighbors)
                 for field in ('datacubes', 'optical_depth'):
                     for name in a[field]: np.testing.assert_allclose(a[field][name], b[field][name], rtol=1e-13, atol=0)
 
     def test_auto_storage_budget_and_early_dense_rejection(self):
         kw = {key: value for key, value in self.kw.items() if key not in ('npix', 'N_NGB', 'workers')}
-        prepared = galaxy.prepare_galaxy_continuum(self.snap, max_grid_bytes=400, **kw)
+        prepared = galaxy.prepare_galaxy_datacube(self.snap, max_grid_bytes=400, **kw)
         self.assertEqual(prepared['storage'], 'compact')
         self.assertLessEqual(prepared['emission'].nbytes+prepared['dust_density'].nbytes+prepared['field_indices'].nbytes, 400)
         with patch.object(h5py, 'File', side_effect=AssertionError('Snapshot opened before budget check')), \
              patch.object(galaxy, 'load_resource', side_effect=AssertionError('Resources loaded before budget check')):
             with self.assertRaisesRegex(MemoryError, 'exceeding'):
-                galaxy.prepare_galaxy_continuum(self.snap, storage='dense', max_grid_bytes=400, **kw)
+                galaxy.prepare_galaxy_datacube(self.snap, storage='dense', max_grid_bytes=400, **kw)
             with self.assertRaisesRegex(MemoryError, 'occupancy'):
-                galaxy.prepare_galaxy_continuum(self.snap, max_grid_bytes=100, **kw)
+                galaxy.prepare_galaxy_datacube(self.snap, max_grid_bytes=100, **kw)
         with self.assertRaisesRegex(MemoryError, 'exceeding'):
-            galaxy.prepare_galaxy_continuum(self.snap, max_grid_bytes=330, **kw)
-        unlimited = galaxy.prepare_galaxy_continuum(self.snap, max_grid_bytes=None, **kw)
+            galaxy.prepare_galaxy_datacube(self.snap, max_grid_bytes=330, **kw)
+        unlimited = galaxy.prepare_galaxy_datacube(self.snap, max_grid_bytes=None, **kw)
         self.assertEqual(unlimited['storage'], 'dense')
 
     def test_disk_storage_is_unique_and_preserves_coefficients(self):
         kw = {key: value for key, value in self.kw.items() if key not in ('npix', 'N_NGB', 'workers')}
         with tempfile.TemporaryDirectory() as directory:
             for storage in ('dense', 'compact'):
-                expected = galaxy.prepare_galaxy_continuum(self.snap, storage=storage, **kw)
-                disk = galaxy.prepare_galaxy_continuum(self.snap, storage=storage, storage_dir=directory, **kw)
-                other = galaxy.prepare_galaxy_continuum(self.snap, storage=storage, storage_dir=directory, **kw)
+                expected = galaxy.prepare_galaxy_datacube(self.snap, storage=storage, **kw)
+                disk = galaxy.prepare_galaxy_datacube(self.snap, storage=storage, storage_dir=directory, **kw)
+                other = galaxy.prepare_galaxy_datacube(self.snap, storage=storage, storage_dir=directory, **kw)
                 self.assertNotEqual(disk['storage_path'], other['storage_path'])
                 for key in ('emission', 'dust_density'):
                     self.assertIsInstance(disk[key], np.memmap)
                     saved = np.load(disk['storage_path']/(key+'.npy'), mmap_mode='r')
                     np.testing.assert_array_equal(saved, expected[key])
-                a = galaxy.raytrace_galaxy_continuum(expected, npix=2)
-                b = galaxy.raytrace_galaxy_continuum(disk, npix=2)
+                a = galaxy.raytrace_galaxy_datacube(expected, npix=2)
+                b = galaxy.raytrace_galaxy_datacube(disk, npix=2)
                 for field in ('datacubes', 'optical_depth'):
                     for name in a[field]: np.testing.assert_array_equal(a[field][name], b[field][name])
             with patch.object(galaxy.shutil, 'disk_usage', return_value=SimpleNamespace(free=0)):
                 with self.assertRaisesRegex(OSError, 'disk space'):
-                    galaxy.prepare_galaxy_continuum(self.snap, storage_dir=directory, **kw)
+                    galaxy.prepare_galaxy_datacube(self.snap, storage_dir=directory, **kw)
 
     def test_preparation_bounds_particle_spectra(self):
         original = galaxy.bin_particles_direct
@@ -186,9 +186,9 @@ class TestGalaxyContinuum(unittest.TestCase):
             widths.append(1 if values.ndim == 1 else values.shape[1])
             return original(pos, values, **kwargs)
         with patch.object(galaxy, 'bin_particles_direct', side_effect=deposit):
-            result = galaxy.galaxy_continuum(self.snap, frequency_chunk_size=2, **self.kw)
+            result = galaxy.galaxy_datacube(self.snap, frequency_chunk_size=2, **self.kw)
         self.assertEqual(max(widths), 2)
-        expected = galaxy.galaxy_continuum(self.snap, frequency_chunk_size=None, **self.kw)
+        expected = galaxy.galaxy_datacube(self.snap, frequency_chunk_size=None, **self.kw)
         for name in expected['datacubes']:
             np.testing.assert_allclose(result['datacubes'][name], expected['datacubes'][name], rtol=1e-13, atol=0)
 
@@ -218,8 +218,8 @@ class TestGalaxyContinuum(unittest.TestCase):
         positions = self.snap.pos[4].copy(); masses = self.snap.mass[4].copy()
         self.snap.filepath = Path('/nonexistent/snapshot.hdf5')
         with patch.object(h5py, 'File', side_effect=AssertionError('Bypassed cached snapshot accessors')):
-            dense = galaxy.prepare_galaxy_continuum(self.snap, dust_to_metal=0, **kw)
-            compact = galaxy.prepare_galaxy_continuum(self.snap, dust_to_metal=0, storage='compact', **kw)
+            dense = galaxy.prepare_galaxy_datacube(self.snap, dust_to_metal=0, **kw)
+            compact = galaxy.prepare_galaxy_datacube(self.snap, dust_to_metal=0, storage='compact', **kw)
         for key in ('emission', 'dust_density'):
             np.testing.assert_allclose(compact[key][compact['field_indices']], dense[key], rtol=1e-13, atol=0)
         expected = np.histogramdd(positions.to_value(u.kpc), bins=(4, 4, 4), range=[(-.5, .5)]*3,
@@ -243,7 +243,7 @@ class TestGalaxyContinuum(unittest.TestCase):
         np.testing.assert_allclose(self.snap.scale_factor_to_time(.5), cosmology.age(1))
         kw = {key: value for key, value in self.kw.items() if key not in ('npix', 'N_NGB', 'workers')}
         for storage in ('dense', 'compact'):
-            prepared = galaxy.prepare_galaxy_continuum(self.snap, storage=storage, clip_population=False, **kw)
+            prepared = galaxy.prepare_galaxy_datacube(self.snap, storage=storage, clip_population=False, **kw)
             self.assertEqual(prepared['particle_counts']['stars'], 1)
             self.assertEqual(prepared['particle_counts']['wind_excluded'], 1)
             self.assertEqual(prepared['particle_counts']['population_clipped'], 0)
@@ -251,11 +251,11 @@ class TestGalaxyContinuum(unittest.TestCase):
     def test_inner_radius_selection_and_compact_occupancy(self):
         kw = {key: value for key, value in self.kw.items() if key not in ('npix', 'N_NGB', 'workers')}
         center = [.2, 0, 0]*u.kpc
-        baseline = galaxy.prepare_galaxy_continuum(self.snap, center=center, **kw)
+        baseline = galaxy.prepare_galaxy_datacube(self.snap, center=center, **kw)
         retained = np.ravel_multi_index((0, 2, 2), (4, 4, 4))
         for storage in ('dense', 'compact'):
             for radius, chunk in ((.4*u.kpc, 1), (400*u.pc, 10), (.4, 1)):
-                prepared = galaxy.prepare_galaxy_continuum(self.snap, center=center, inner_radius=radius,
+                prepared = galaxy.prepare_galaxy_datacube(self.snap, center=center, inner_radius=radius,
                                                           storage=storage, chunk_size=chunk, **kw)
                 self.assertEqual(prepared['particle_counts']['gas'], 1)
                 self.assertEqual(prepared['particle_counts']['stars'], 1)
@@ -264,24 +264,24 @@ class TestGalaxyContinuum(unittest.TestCase):
                     actual = prepared[key] if storage == 'dense' else prepared[key][prepared['field_indices']]
                     expected = np.zeros_like(baseline[key]); expected[retained] = baseline[key][retained]
                     np.testing.assert_allclose(actual, expected, rtol=1e-13, atol=0)
-        result = galaxy.galaxy_continuum(self.snap, center=center, inner_radius=400*u.pc, **self.kw)
+        result = galaxy.galaxy_datacube(self.snap, center=center, inner_radius=400*u.pc, **self.kw)
         self.assertEqual(result['particle_counts']['stars'], 1)
         with self.assertRaisesRegex(ValueError, 'No stars selected'):
-            galaxy.prepare_galaxy_continuum(self.snap, inner_radius=1*u.kpc, **kw)
+            galaxy.prepare_galaxy_datacube(self.snap, inner_radius=1*u.kpc, **kw)
 
     def test_inner_radius_zero_and_validation(self):
         kw = {key: value for key, value in self.kw.items() if key not in ('npix', 'N_NGB', 'workers')}
         for storage in ('dense', 'compact'):
-            default = galaxy.prepare_galaxy_continuum(self.snap, storage=storage, **kw)
-            zero = galaxy.prepare_galaxy_continuum(self.snap, storage=storage, inner_radius=0*u.pc, **kw)
+            default = galaxy.prepare_galaxy_datacube(self.snap, storage=storage, **kw)
+            zero = galaxy.prepare_galaxy_datacube(self.snap, storage=storage, inner_radius=0*u.pc, **kw)
             for key in ('emission', 'dust_density'): np.testing.assert_array_equal(default[key], zero[key])
         for radius in (-1*u.pc, np.nan*u.kpc, np.inf*u.kpc, [0, 1]*u.pc):
             with self.assertRaisesRegex(ValueError, 'inner_radius'):
-                galaxy.prepare_galaxy_continuum(self.snap, inner_radius=radius, **kw)
+                galaxy.prepare_galaxy_datacube(self.snap, inner_radius=radius, **kw)
 
     def test_initial_mass_conversion_and_zero_dust(self):
-        current = galaxy.galaxy_continuum(self.snap, dust_to_metal=0, **self.kw)
-        initial = galaxy.galaxy_continuum(self.snap, dust_to_metal=0, stellar_mass_is_initial=True, **self.kw)
+        current = galaxy.galaxy_datacube(self.snap, dust_to_metal=0, **self.kw)
+        initial = galaxy.galaxy_datacube(self.snap, dust_to_metal=0, stellar_mass_is_initial=True, **self.kw)
         for name in current['datacubes']:
             np.testing.assert_allclose(current['datacubes'][name], 2*initial['datacubes'][name])
             np.testing.assert_allclose(current['optical_depth'][name], 0)

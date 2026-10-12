@@ -81,10 +81,10 @@ class TestFastTransfer(unittest.TestCase):
                         particle_counts={}, emission=self.rng.random((n**3, 5)), dust_density=self.rng.random(n**3),
                         k_abs=np.linspace(.1, 1, 5), k_sca=np.linspace(.2, 2, 5))
         emission = prepared['emission'].copy()
-        reference = galaxy.raytrace_galaxy_continuum(prepared, npix=5, backend='numpy', workers=1)
+        reference = galaxy.raytrace_galaxy_datacube(prepared, npix=5, backend='numpy', workers=1)
         for chunk in (1, 7, 4096):
             for ret_tau in (True, False):
-                result = galaxy.raytrace_galaxy_continuum(prepared, npix=5, workers=min(2, numba.config.NUMBA_NUM_THREADS), query_chunk_size=chunk,
+                result = galaxy.raytrace_galaxy_datacube(prepared, npix=5, workers=min(2, numba.config.NUMBA_NUM_THREADS), query_chunk_size=chunk,
                                                          return_optical_depth=ret_tau)
                 self.assertEqual('optical_depth' in result, ret_tau)
                 for name in reference['datacubes']:

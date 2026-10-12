@@ -36,15 +36,15 @@ def _BC03_current_mass_fraction(model, metals, ages):
 
 
 def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effective',
-                 percentile=99.5, stretch=0.03, ax=None, title=None, continuum=None,
-                 cache=True, **continuum_kwargs):
+                 percentile=99.5, stretch=0.03, ax=None, title=None, datacube=None,
+                 cache=True, **datacube_kwargs):
     """Render a galaxy RGB image in one call, using the notebook's shared asinh stretch.
 
-    Pass a snapshot and any galaxy_continuum options (npix, grid_shape, Lbox, inner_radius,
+    Pass a snapshot and any galaxy_datacube options (npix, grid_shape, Lbox, inner_radius,
     workers, log, etc.). Defaults here use 128 linear wavelengths from 0.28 to 1.25 micron
     and omit optical-depth cubes. Explicit lam or wavelength_range overrides that range.
     If npix is supplied without grid_shape, the grid uses npix cells along each axis.
-    Alternatively pass continuum=the result of galaxy_continuum or raytrace_galaxy_continuum
+    Alternatively pass datacube=the result of galaxy_datacube or raytrace_galaxy_datacube
     to recolor a cube without another calculation; do not also supply snapshot/RT options.
 
     bands assigns three radiation.load_bandpass names to display red, green and blue.
@@ -53,7 +53,7 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
     component selects pure_emission, absorption or effective attenuation. The common
     asinh stretch preserves channel ratios before clipping to [0, 1]; percentile sets
     the positive mean-brightness reference and stretch sets its linear-to-log transition.
-    Empty images remain black. Filter coverage must fit inside the continuum wavelengths.
+    Empty images remain black. Filter coverage must fit inside the datacube wavelengths.
 
     Returns rgb (y, x, 3), unstretched band-averaged channels with I_lambda units per micron,
     extent in kpc, bands, component, scale, figure, ax and the Matplotlib image artist.
@@ -63,28 +63,28 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
 
     # validate display settings before preparing or tracing the galaxy
     if isinstance(bands, str) or len(bands) != 3: raise ValueError('Choose three filter names in display red, green, blue order.')
-    if component not in ('pure_emission', 'absorption', 'effective'): raise ValueError('Unknown continuum component.')
+    if component not in ('pure_emission', 'absorption', 'effective'): raise ValueError('Unknown datacube component.')
     if not np.isfinite(percentile) or not 0 < percentile <= 100: raise ValueError('percentile must lie in (0, 100].')
     if not np.isfinite(stretch) or stretch <= 0: raise ValueError('stretch must be finite and positive.')
-    if continuum is not None and (snap is not None or continuum_kwargs): raise ValueError('Use either a snapshot with RT options or an existing continuum.')
-    if continuum is None and snap is None: raise ValueError('Provide a snapshot or an existing continuum.')
+    if datacube is not None and (snap is not None or datacube_kwargs): raise ValueError('Use either a snapshot with RT options or an existing datacube.')
+    if datacube is None and snap is None: raise ValueError('Provide a snapshot or an existing datacube.')
     profiles = [rad.load_bandpass(name, cache=cache) for name in bands]
 
-    # reuse the complete continuum workflow with optical sampling for a visual image
-    if continuum is None:
-        if continuum_kwargs.get('lam') is None and continuum_kwargs.get('wavelength_range') is None:
-            continuum_kwargs['wavelength_range'] = [0.28, 1.25]*u.micron
-        if 'npix' in continuum_kwargs: continuum_kwargs.setdefault('grid_shape', continuum_kwargs['npix'])
-        continuum_kwargs.setdefault('n_wavelength', 128)
-        continuum_kwargs.setdefault('wavelength_spacing', 'linear')
-        continuum_kwargs.setdefault('return_optical_depth', False)
-        continuum = galaxy_continuum(snap, cache=cache, **continuum_kwargs)
+    # reuse the complete datacube workflow with optical sampling for a visual image
+    if datacube is None:
+        if datacube_kwargs.get('lam') is None and datacube_kwargs.get('wavelength_range') is None:
+            datacube_kwargs['wavelength_range'] = [0.28, 1.25]*u.micron
+        if 'npix' in datacube_kwargs: datacube_kwargs.setdefault('grid_shape', datacube_kwargs['npix'])
+        datacube_kwargs.setdefault('n_wavelength', 128)
+        datacube_kwargs.setdefault('wavelength_spacing', 'linear')
+        datacube_kwargs.setdefault('return_optical_depth', False)
+        datacube = galaxy_datacube(snap, cache=cache, **datacube_kwargs)
 
     # integrate the chosen filters and apply the notebook's common brightness stretch
     unit = u.erg/u.s/u.cm**2/u.sr/u.micron
-    channels = np.stack([rad.integrate_bandpass(continuum['wavelength'], continuum['datacubes'][component],
+    channels = np.stack([rad.integrate_bandpass(datacube['wavelength'], datacube['datacubes'][component],
                         profile, normalize=True).to_value(unit) for profile in profiles], axis=-1)
-    if channels.ndim != 3 or np.any(~np.isfinite(channels)): raise ValueError('The continuum must produce finite 2D band images.')
+    if channels.ndim != 3 or np.any(~np.isfinite(channels)): raise ValueError('The datacube must produce finite 2D band images.')
     brightness = np.mean(channels, axis=-1)
     positive = brightness > 0
     scale = np.percentile(brightness[positive], percentile) if np.any(positive) else 0.
@@ -96,7 +96,7 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
 
     # plot through the shared visual helper and keep the figure available to the caller
     from ..utils import visual as jv
-    extent = continuum['extent'].to(u.kpc)
+    extent = datacube['extent'].to(u.kpc)
     if title is None: title = 'Approximate visible RGB' if tuple(bands) == ('RGB.R', 'RGB.G', 'RGB.B') else ' / '.join(bands)+' (false color)'
     image = jv.imshow(rgb, ax=ax, origin='lower', extent=extent.value, aspect='equal',
                       xlabel='x [kpc]', ylabel='y [kpc]', title=title, show_colorbar=False,
@@ -105,7 +105,7 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
                 scale=scale*unit, figure=image.figure, ax=image.axes, image=image)
 
 
-def galaxy_continuum(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix=64, grid_shape=64,
+def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix=64, grid_shape=64,
                      model='BC03_miles_chabrier', star_type=4, dust_to_metal=0.5,
                      dust_temperature=None, dust_sublimation_temperature=1500*u.K,
                      stellar_mass_is_initial=False, clip_population=True,
@@ -145,26 +145,26 @@ def galaxy_continuum(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npi
     Snapshot arrays are not modified; particle and spectral temporaries are chunked.
     The snapshot may cache full input fields in RAM; chunk_size does not bound that cache.
     storage, storage_dir and max_grid_bytes select coefficient storage as described in
-    prepare_galaxy_continuum; frequency_chunk_size also bounds preparation temporaries.
-    For repeated renders, call prepare_galaxy_continuum once and reuse its result with
-    raytrace_galaxy_continuum to change npix or integration settings without rereading data.
+    prepare_galaxy_datacube; frequency_chunk_size also bounds preparation temporaries.
+    For repeated renders, call prepare_galaxy_datacube once and reuse its result with
+    raytrace_galaxy_datacube to change npix or integration settings without rereading data.
     backend='auto' uses parallel compiled transfer; 'numpy' selects the reference tracer.
     return_optical_depth=False omits optical-depth cubes to reduce output memory.
     """
 
     if int(npix) != npix or npix < 1: raise ValueError('npix must be a positive integer.')
-    prepared = prepare_galaxy_continuum(snap, lam=lam, Lbox=Lbox, depth=depth, center=center, grid_shape=grid_shape,
+    prepared = prepare_galaxy_datacube(snap, lam=lam, Lbox=Lbox, depth=depth, center=center, grid_shape=grid_shape,
         model=model, star_type=star_type, dust_to_metal=dust_to_metal, dust_temperature=dust_temperature,
         dust_sublimation_temperature=dust_sublimation_temperature, stellar_mass_is_initial=stellar_mass_is_initial,
         clip_population=clip_population, chunk_size=chunk_size, log=log, cache=cache,
         wavelength_range=wavelength_range, n_wavelength=n_wavelength, wavelength_spacing=wavelength_spacing,
         frequency_chunk_size=frequency_chunk_size, storage=storage, storage_dir=storage_dir, max_grid_bytes=max_grid_bytes,
         inner_radius=inner_radius)
-    return raytrace_galaxy_continuum(prepared, npix=npix, frequency_chunk_size=frequency_chunk_size,
+    return raytrace_galaxy_datacube(prepared, npix=npix, frequency_chunk_size=frequency_chunk_size,
         step_fraction=step_fraction, N_NGB=N_NGB, workers=workers, query_chunk_size=query_chunk_size, log=log, backend=backend, return_optical_depth=return_optical_depth)
 
 
-def prepare_galaxy_continuum(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, grid_shape=64,
+def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, grid_shape=64,
                             model='BC03_miles_chabrier', star_type=4, dust_to_metal=0.5,
                             dust_temperature=None, dust_sublimation_temperature=1500*u.K,
                             stellar_mass_is_initial=False, clip_population=True, chunk_size=250000,
@@ -172,11 +172,11 @@ def prepare_galaxy_continuum(snap, lam=None, Lbox=10*u.kpc, depth=None, center=N
                             frequency_chunk_size=4, storage='auto', storage_dir=None, max_grid_bytes=4*1024**3, inner_radius=0*u.kpc):
     """Read a GIZMO snapshot and prepare reusable stellar and dust coefficients.
 
-    Uses the physics, units and spatial deposition described in galaxy_continuum.
+    Uses the physics, units and spatial deposition described in galaxy_datacube.
     Reads snap.pos, snap.mass, snap.metals and snapshot-specific fields through snap,
     honoring its cached values and transformed frame. The snapshot caches full input
     fields; chunk_size bounds processing temporaries, not the snapshot cache.
-    Returns a dictionary for raytrace_galaxy_continuum, retaining the emissivity grid
+    Returns a dictionary for raytrace_galaxy_datacube, retaining the emissivity grid
     and dust density in the selected storage. No global grid cache is kept; release the dictionary
     when finished. cache controls the BC03 resource cache only. Reprepare after changing
     the snapshot/frame, box, inner_radius, grid_shape, wavelengths, stellar model or dust parameters.
@@ -388,14 +388,14 @@ def prepare_galaxy_continuum(snap, lam=None, Lbox=10*u.kpc, depth=None, center=N
                 grid_shape=tuple(dims), particle_counts=counts)
 
 
-def raytrace_galaxy_continuum(prepared, npix=64, frequency_chunk_size=4, step_fraction=0.25,
+def raytrace_galaxy_datacube(prepared, npix=64, frequency_chunk_size=4, step_fraction=0.25,
                              N_NGB=8, workers=-1, query_chunk_size=4096, log=False, backend='auto', return_optical_depth=True):
     """Render a prepared galaxy without reading its snapshot or rebuilding its spectra.
 
-    prepared is the dictionary returned by prepare_galaxy_continuum. npix and integration
+    prepared is the dictionary returned by prepare_galaxy_datacube. npix and integration
     settings may change between calls; the dictionary is not modified. All wavelengths
     and three opacity cases share spatial queries and steps. Returns the same datacubes
-    and metadata as galaxy_continuum. backend='auto' uses fused Numba
+    and metadata as galaxy_datacube. backend='auto' uses fused Numba
     transfer, with workers controlling parallel rays (-1 uses the current Numba thread
     count). query_chunk_size bounds complete rays per batch. Empty compact-grid samples
     skip spectral work. The first call includes compilation. backend='numpy' selects

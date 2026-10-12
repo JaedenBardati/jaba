@@ -59,11 +59,11 @@ filters and the notebook's shared asinh stretch; it is not a calibrated true-col
 Choose `bands=('SDSS.i', 'SDSS.r', 'SDSS.g')` or Johnson I/V/B for false color.
 `component` selects `effective` (default), `absorption`, or `pure_emission`.
 `percentile` and `stretch` control the display, while additional keywords go to
-`galaxy_continuum`. The image helper defaults to 128 linear wavelengths over
+`galaxy_datacube`. The image helper defaults to 128 linear wavelengths over
 0.28–1.25 micron and omits optical-depth cubes; `lam` or `wavelength_range` can override
 that coverage. Standard filters download through the resource cache on first use.
 
-For an existing calculation, use `galaxy.galaxy_image(continuum=galaxy_rt)` to change
+For an existing calculation, use `galaxy.galaxy_image(datacube=galaxy_rt)` to change
 filters or stretch without tracing again. The result contains the RGB array, physical
 band images, extent, figure, axes and image artist; it does not retain the spectral cube.
 Pass `ax=` to draw into an existing subplot. When `npix` is supplied without
