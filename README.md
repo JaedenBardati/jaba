@@ -68,6 +68,8 @@ filters or stretch without tracing again. The result contains the RGB array, phy
 band images, extent, figure, axes and image artist; it does not retain the spectral cube.
 Pass `ax=` to draw into an existing subplot. When `npix` is supplied without
 `grid_shape`, the grid uses `npix` cells along each axis; an explicit `grid_shape` wins.
+The default `inner_radius` is 5% of a pixel width (`0.05 * Lbox / npix`);
+pass `inner_radius=0` to disable the central particle cutoff.
 
 ### Running Simulations
 

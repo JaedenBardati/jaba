@@ -22,6 +22,7 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
     workers, log, etc.). Defaults here use 128 linear wavelengths from 0.28 to 1.25 micron
     and omit optical-depth cubes. Explicit lam or wavelength_range overrides that range.
     If npix is supplied without grid_shape, the grid uses npix cells along each axis.
+    inner_radius defaults to 0.05*Lbox/npix (5% of a pixel width); pass zero to disable it.
     Alternatively pass datacube=the result of galaxy_datacube or raytrace_galaxy_datacube
     to recolor a cube without another calculation; do not also supply snapshot/RT options.
 
@@ -53,6 +54,8 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
         if datacube_kwargs.get('lam') is None and datacube_kwargs.get('wavelength_range') is None:
             datacube_kwargs['wavelength_range'] = [0.28, 1.25]*u.micron
         if 'npix' in datacube_kwargs: datacube_kwargs.setdefault('grid_shape', datacube_kwargs['npix'])
+        if 'inner_radius' not in datacube_kwargs:
+            datacube_kwargs['inner_radius'] = 0.05*u.Quantity(datacube_kwargs.get('Lbox', 10), u.kpc)/datacube_kwargs.get('npix', 64)
         datacube_kwargs.setdefault('n_wavelength', 128)
         datacube_kwargs.setdefault('wavelength_spacing', 'linear')
         datacube_kwargs.setdefault('return_optical_depth', False)
