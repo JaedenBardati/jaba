@@ -1,3 +1,4 @@
+from operator import pos
 import math, warnings
 
 import numpy as np
@@ -31,11 +32,87 @@ def quick_image_downsize(image, factor=2):
 ################ Kernels #################
 ##########################################
 
-def cubic_kernel(q):
-    return (q < 1.0)*(1.0 - 1.5*q*q + 0.75*q*q*q) + (1.0 < q)*(q < 2.0)*0.25*(2.0 - q)**3
+def cubic_kernel(r, invh, d=3, w=True, wprime=False, wprime2=False, q_instead=False, dw_dq_instead=False, mask=None):
+    """
+    Cubic kernel normalized over a ball of dimension d, and its 1st and 2nd derivatives with respect to r.
+    Pass numpy arrays to get vectorized results (optimized for large arrays).
+    Here, W(r, h) = K_d * h^-d * w(q) is the kernel normalized over a ball of dimension d (units of 1/volume), and w(q) is the cubic kernel normalized over q = r/h (unitless).
+    Parameters:
+        - r              : the distance from the particle; must be strictly non-negative
+        - invh           : the inverse of the compact support radius (2h for typical SPH smoothing length, h for MFM); must be strictly non-negative
+        - d              : the number of dimensions; must be strictly integers 1, 2, or 3; defaults to 3d
+        - w              : if True, computes the kernel values in new array; if set to an array, sets kernel values in-place over that array (must be same shape as r), this can be used to speed up multiple calls with the same set of points/neighbours
+        - wprime         : if True, computes the 1st derivative values in new array; if set to an array, sets 1st derivative values in-place over that array (must be same shape as r)
+        - wprime2        : if True, computes the 2nd derivative values in new array; if set to an array, sets 2nd derivative values in-place over that array (must be same shape as r)
+        - q_instead      : if True, interprets first input as q = r/h instead of r
+        - dw_dq_instead  : if True, returns the derivatives of w(q) with respect to q = r/h instead of W(r, h) with respect to r
+        - mask           : optional boolean mask to apply to the kernel and derivative values (must be same shape as r)
+    """
+    # initialize relevant arrays
+    q = r if q_instead else r * invh
+    ret_w, ret_wprime, ret_wprime2 = w is True, wprime is True, wprime2 is True
+    w = np.zeros_like(q, dtype=np.float64) if w is True else w if w is not False else None
+    wprime = np.zeros_like(q, dtype=np.float64) if wprime is True else wprime if wprime is not False else None
+    wprime2 = np.zeros_like(q, dtype=np.float64) if wprime2 is True else wprime2 if wprime2 is not False else None
+
+    # get the window function w(q) normalized over q = 0 to q = 1.0, for q < 0.5
+    cut = q < 0.5
+    # if mask is not None:
+    #     cut &= mask
+    _qt = q[cut]
+    _qt2 = _qt*_qt
+    if w is not None:
+        w[cut] = (8.0/3.0) - 16.0*(1.0 - _qt)*_qt2
+    if wprime is not None:
+        wprime[cut] = 48.0*_qt2 - 32.0*_qt
+    if wprime2 is not None:
+        wprime2[cut] = 96.0*_qt - 32.0
     
-@numba.njit(fastmath=True)
-def _cubic_kernel(q):
+    # get the window function w(q) normalized over q = 0 to q = 1.0, for 0.5 < q < 1.0
+    if mask is not None:
+        np.copyto(cut, mask) 
+    else:
+        np.invert(cut, out=cut)
+    cut &= q < 1.0
+    _qt = 1.0 - q[cut]
+    _qt2 = _qt*_qt
+    if w is not None:
+        w[cut] = (16.0/3.0)*_qt2*_qt
+    if wprime is not None:
+        wprime[cut] = -16.0*_qt2
+    if wprime2 is not None:
+        wprime2[cut] = 12.0*_qt
+
+    # if desired, convert to the window function W(r,h) normalized from over radius h ball in d dimensions
+    if not dw_dq_instead:
+        _Kd = (3.0 / np.pi)*invh*invh*invh if d == 3 else (15.0 / (7.0 * np.pi))*invh*invh if d == 2 else 0.5*invh if d == 1 else None
+        if w is not None:
+            w *= _Kd
+        if wprime is not None or wprime2 is not None:
+            _Kd *= invh
+            if wprime is not None:
+                wprime *= _Kd
+            if wprime2 is not None:
+                wprime2 *= _Kd*invh
+
+    # return output
+    if ret_w:
+        if ret_wprime:
+            return (w, wprime, wprime2) if ret_wprime2 else (w, wprime)
+        elif ret_wprime2:
+            return (w, wprime2)
+        return w
+    elif ret_wprime:
+        return (wprime, wprime2) if ret_wprime2 else wprime
+    elif ret_wprime2:
+        return wprime2
+    return None
+
+
+
+@numba.njit()
+def _cubic_kernel(q): # TODO update as above
+    q = 2.0 * q # cludge for gizmo implementaion instead
     if q < 1.0:
         return 1.0 - 1.5*q*q + 0.75*q*q*q
     elif q < 2.0:
@@ -115,7 +192,7 @@ def _bin_particles_direct_parallel(pos, qty, mins, maxs, dims, strides, grid, nt
                 grid[m, linear_index] += qty[n, m]
 
 
-def bin_particles_direct(pos, *qty, mins=None, maxs=None, dims=None, ret_bins=False, nthreads=None, _npart_multithread_threshold=1e6):
+def bin_particles_direct(pos, *qty, mins=None, maxs=None, dims=None, ret_bins=False, nthreads=None, out=None, _npart_multithread_threshold=1e6):
     """
     General N-dimensional direct binning algorithm.
     An extremely quick O(N) way to interpolate particles onto a Cartesian grid.
@@ -131,6 +208,11 @@ def bin_particles_direct(pos, *qty, mins=None, maxs=None, dims=None, ret_bins=Fa
     dims     : (d,)     number of bins per dimension (DEFAULT: 512x512 image)
     nthreads : int      number of threads to use (DEFAULT: all available threads)
     ret_bins : bool     also return the bin edges if True (DEFAULT: False)
+    out      : ndarray  optional writable float64 output grid to accumulate into, without clearing
+
+    out must have the returned grid shape: tuple(dims) for one quantity, otherwise
+    (M, *dims). Strided views are supported if their spatial axes can be flattened
+    without copying. This allows multiple particle chunks to share one output grid.
     
     If D > d, the extra dimensions of pos are ignored. If D < d, an error is raised.
     """
@@ -182,13 +264,20 @@ def bin_particles_direct(pos, *qty, mins=None, maxs=None, dims=None, ret_bins=Fa
     total_size = strides[0] * dims[0]
 
     # calculate the grid
-    grid = np.zeros((M, total_size), dtype=np.float64, order='C')
+    shape = tuple(dims) if M == 1 else (M,) + tuple(dims)
+    if out is None:
+        grid = np.zeros((M, total_size), dtype=np.float64, order='C')
+    else:
+        assert isinstance(out, np.ndarray) and out.shape == shape, 'out must match the returned grid shape.'
+        assert out.dtype == np.float64 and out.flags.writeable, 'out must be a writable float64 array.'
+        grid = out.view()
+        grid.shape = (M, total_size)
     if nthreads == 1:
         _bin_particles_direct_serial(_pos, _qty, mins, maxs, dims, strides, grid)
     else:
         with numba_threads(nthreads):
             _bin_particles_direct_parallel(_pos, _qty, mins, maxs, dims, strides, grid, nthreads)
-    grid = grid.reshape(tuple(dims)) if M == 1 else grid.reshape((M,) + tuple(dims))
+    grid = grid.reshape(shape) if out is None else out
     
     if not ret_bins:
         return grid
@@ -1485,3 +1574,673 @@ def bin_particles_kde(pos, qty, mins=None, maxs=None, dims=None,
     smoothed /= norm_factor
 
     return smoothed
+
+
+
+#### Map back onto particles ####
+
+@numba.njit
+def _map_grid_to_particles_serial(indices, grid, result, default_value=0.0):
+    N = indices.shape[0]
+    dims = np.asarray(grid.shape)
+    d = dims.shape[0]
+
+    strides = np.empty(d, dtype=np.int64)
+    strides[d - 1] = 1
+    for i in range(d - 2, -1, -1):
+        strides[i] = strides[i + 1] * dims[i + 1]
+
+    flat_grid = grid.ravel()
+
+    for n in range(N):
+        idx = indices[n]
+        valid = True
+        lin = 0
+        for k in range(d):
+            if idx[k] < 0 or idx[k] >= dims[k]:
+                valid = False
+                break
+            lin += idx[k] * strides[k]
+        if valid:
+            result[n] = flat_grid[lin]
+        else:
+            result[n] = default_value
+    return result
+
+def map_grid_to_particles(pos, grid, mins=None, maxs=None, default_value=0.0):
+    """
+    Map grid values back onto particles by using value in the nearest grid cell.
+    All particles in a grid cell are given the same value. For conservative quantities, the 
+    grid should be normalized by the number of particles in each cell beforehand.
+    """
+    pos = np.asarray(pos)
+    grid = np.asarray(grid)
+    N, D = pos.shape
+    dims = np.asarray(grid.shape)
+    d = dims.shape[0]
+
+    if mins is None:
+        mins = np.min(pos[:, :d], axis=0)
+    if maxs is None:
+        maxs = np.max(pos[:, :d], axis=0)
+    mins = np.asarray(mins)
+    maxs = np.asarray(maxs)
+    dx = (maxs - mins) / dims
+
+    indices = ((pos[:, :d] - mins) / dx).astype(int)
+    result = np.zeros(N, dtype=grid.dtype)
+    _map_grid_to_particles_serial(indices, grid, result, default_value=default_value)
+    
+    return result
+
+
+### tree-based interpolation
+
+@numba.njit(cache=True)
+def _cartesian_grid_query(points, axes, k):
+    distances = np.empty((len(points), k)); indices = np.empty((len(points), k), dtype=np.int64)
+    for row in range(len(points)):
+        best = np.zeros(k); best_indices = np.zeros(k, dtype=np.int64); count = 1
+        for dim, axis in enumerate(axes):
+
+            # order the nearest coordinates on this axis by physical distance
+            size = len(axis); axis_count = min(k, size)
+            right = np.searchsorted(axis, points[row, dim]); left = right-1
+            axis_distances = np.empty(axis_count); axis_indices = np.empty(axis_count, dtype=np.int64)
+            for i in range(axis_count):
+                dl = (axis[left]-points[row, dim])**2 if left >= 0 else np.inf
+                dr = (axis[right]-points[row, dim])**2 if right < size else np.inf
+                if dl <= dr:
+                    axis_distances[i] = dl; axis_indices[i] = left; left -= 1
+                else:
+                    axis_distances[i] = dr; axis_indices[i] = right; right += 1
+
+            # retain the nearest combinations without materializing the Cartesian product
+            merged = np.full(k, np.inf); merged_indices = np.empty(k, dtype=np.int64)
+            found = 0
+            for i in range(count):
+                for j in range(axis_count):
+                    distance = best[i]+axis_distances[j]
+                    if distance >= merged[-1]: break
+                    slot = min(found, k-1)
+                    while slot > 0 and distance < merged[slot-1]:
+                        merged[slot] = merged[slot-1]; merged_indices[slot] = merged_indices[slot-1]
+                        slot -= 1
+                    merged[slot] = distance; merged_indices[slot] = best_indices[i]*size+axis_indices[j]
+                    found = min(found+1, k)
+            best, best_indices, count = merged, merged_indices, found
+        distances[row] = np.sqrt(best); indices[row] = best_indices
+    return distances, indices
+
+
+class CartesianGrid:
+    """Nearest-neighbor queries on a Cartesian product, storing only its sorted axes.
+
+    The query interface supports the Euclidean queries used by mfm_value_at_pos and
+    raytrace_particles. Flatten fields in C order, as for meshgrid(indexing='ij').
+    Distances and kernel weights match a KD-tree; ordering of equal-distance neighbors
+    may differ. Queries run in compiled serial code; workers is accepted for compatibility.
+    Axes may have unequal or nonuniform spacing. No full coordinate array or tree is built.
+    """
+    def __init__(self, axes):
+        self.axes = tuple(np.asarray(axis, dtype=float) for axis in axes)
+        if not 1 <= len(self.axes) <= 3 or any(axis.ndim != 1 or not len(axis) or
+                np.any(~np.isfinite(axis)) or np.any(np.diff(axis) <= 0) for axis in self.axes):
+            raise ValueError('Use one to three finite, strictly increasing coordinate axes.')
+        self.m = len(self.axes); self.n = math.prod(len(axis) for axis in self.axes)
+
+    def query(self, points, k=1, workers=-1, distance_upper_bound=np.inf):
+        points = np.asarray(points, dtype=float)
+        if points.shape[-1] != self.m or np.any(~np.isfinite(points)) or int(k) != k or not 1 <= k <= self.n:
+            raise ValueError('Use finite query points with dimensions and neighbor count matching the Cartesian grid.')
+        shape = points.shape[:-1]+(int(k),)
+        distances, indices = _cartesian_grid_query(points.reshape(-1, self.m), self.axes, int(k))
+        outside = distances >= distance_upper_bound
+        distances[outside] = np.inf; indices[outside] = self.n
+        distances, indices = distances.reshape(shape), indices.reshape(shape)
+        return (distances[..., 0], indices[..., 0]) if k == 1 else (distances, indices)
+
+
+def mfm_value_at_pos(query_pos, tree=None, pos=None, N_NGB=32, workers=-1, distance_upper_bound=np.inf, tol=1e-8, maxiter=50, 
+                     qty=None, ret_h=False, ret_neighbours=False, ret_convergence_info=False, approx=False): # return options
+    """
+    Get interpolated quantity at specific position array using a tree-based approach for MFM or SPH with variable smoothing lengths.
+    This method is more efficient for large datasets and can handle varying smoothing lengths.
+    Note h is the maximum radius of support for each particle (r/h = 1 is maximum distance).
+    tol is the absolute tolerance for the difference of the effective number of neighbors and the target number of neighbors (N_NGB). 
+    Giving a qty array will return the interpolated quantity at the query positions. 
+    """
+    from scipy.optimize import newton
+    if qty is not None:
+        qty = np.asarray(qty, dtype=np.float64)
+    query_pos = np.asarray(query_pos, dtype=np.float64)
+    d = query_pos.shape[-1]
+    assert d in (1, 2, 3), f"Only 1D, 2D, and 3D are supported (but d = {d})."
+    if tree is None:
+        # Build a KD-tree for efficient neighbor searches
+        from scipy.spatial import cKDTree
+        if pos is None:
+            raise ValueError("Either a tree or particle positions must be provided.")
+        pos = np.asarray(pos, dtype=np.float64)
+        tree = cKDTree(pos)
+
+    if not approx:
+        # Query the tree for particles near the query positions
+        neighbours_dist, neighbours_idx = tree.query(query_pos, k=2*N_NGB, workers=workers, distance_upper_bound=distance_upper_bound) # shape: (pts, neighbours)
+        neighbours_dist = np.clip(neighbours_dist, 1e-15, None)
+
+        # iteratively find h for each query point (Newton-Raphson)
+        h0 = neighbours_dist[:, N_NGB-1] # first guess for h is the distance to the 32nd neighbour
+        h1 = np.mean(neighbours_dist, axis=-1)
+
+        class FunctionCache:
+            def __init__(self, neighbours_dist, d):
+                self.neighbours_dist = neighbours_dist
+                self.d = d
+                self._w = np.zeros_like(neighbours_dist)
+                #self._wprime = np.zeros_like(neighbours_dist)
+                Cd = 1.0 if d == 1 else (np.pi if d == 2 else (4.0/3.0 * np.pi))
+                Kd = (3.0 / np.pi) if self.d == 3 else (15.0 / (7.0 * np.pi)) if self.d == 2 else 0.5 if self.d == 1 else None
+                self.C = Cd*Kd
+
+            def f(self, _h):
+                # scipy always calls this function first and only once per iteration (see https://github.com/scipy/scipy/blob/c71fcecc1bdd07423de43da2588a5af83d95b5f7/scipy/optimize/_zeros_py.py#L319)
+                # so we can update all cached values here and use them in the derivative functions without recomputing them
+                _invhp = 1.0/_h[:, np.newaxis] # NOTE: tried using invh as parameter but it was less stable for probems I am interested in than using h directly
+                self._w.fill(0.0)
+                #self._wprime.fill(0.0)
+                q = neighbours_dist * _invhp
+                cubic_kernel(q, _invhp, d=self.d, w=self._w, wprime=False, wprime2=False, q_instead=True, dw_dq_instead=True)
+                #self._wprime *= -q*_invhp # convert to dh rather than dr
+                return (self.C * self._w.sum(axis=-1)) - N_NGB
+
+            # def fprime(self, _h): # NOTE: tried using prime method but its fairly unstable compared to secant method used below
+            #     return self.C * self._wprime.sum(axis=-1) 
+            
+        cache = FunctionCache(neighbours_dist, d)
+        h, converged, zero_der = newton(cache.f, x0=h0, x1=h1, fprime=None, tol=tol, maxiter=maxiter, full_output=True, disp=False)
+        h[~converged] = h0[~converged] # fallback to distance to initial guess if not converged
+
+        if not np.all(converged):
+            warnings.warn(f"Newton-Raphson did not converge for {np.sum(~converged)} query points.")
+        if np.any(zero_der):
+            warnings.warn(f"Zero derivative encountered for {np.sum(zero_der)} query points during Newton-Raphson.")
+    else:
+        # approximate h as the distance to the 32nd neighbour only, and skip iteration phase
+        neighbours_dist, neighbours_idx = tree.query(query_pos, k=N_NGB, workers=workers, distance_upper_bound=distance_upper_bound) # shape: (pts, neighbours) 
+        h = neighbours_dist[:, N_NGB-1]
+        if ret_convergence_info:
+            converged = np.zeros(len(h), dtype=bool)
+            zero_der = np.zeros(len(h), dtype=bool)
+    
+    if qty is not None or ret_neighbours:
+        invhp = 1.0/h[:, None]
+        W = cubic_kernel(neighbours_dist, invh=invhp, d=d)
+
+    ret = []
+    if qty is not None:
+        ret.append(np.sum(qty[neighbours_idx, ...] * W, axis=1) / np.sum(W, axis=1))
+    if ret_h:
+        ret.append(h)
+    if ret_neighbours:
+        ret.extend([neighbours_idx, W]) # note that when W = 0, the corresponding neighbour is not actually used in the interpolation
+    if ret_convergence_info:
+        ret.extend([converged, zero_der])
+
+    return ret[0] if len(ret) == 1 else tuple(ret)
+
+
+
+### Hybrid direct/sampled grids ###
+
+def sample_particles_grid(qty, mins, maxs, weight=None, dims=None, sample_dims=None, sample_mask=None,
+                          pos=None, tree=None, grid_to_particle=None, n_batches=128,
+                          approx=True, N_NGB=32, workers=-1, distance_upper_bound=np.inf, 
+                          rng=None, sampling='random', log=False, log_every=1, sample_state=None,
+                          save_every=None, save_callback=None, ret_state=False, query_chunk_size=250_000,
+                          eta_update_seconds=5.0):
+    """
+    Estimate a grid by uniformly sampling transformed coordinates and interpolating particles.
+
+    If you set sampling to sobol, make sure that the number of batches is a power of two for best results. 
+    Dimensions is the number of cells in each dimension of the grid. Sample dimensions is the number of samples in each dimension.
+    By default, the number of samples in each dimension is equal to the number of grid cells in that dimension and prod(dims)^(1/(D*len(dims))) in other dimensions.
+    query_chunk_size limits the number of query points held during each neighbor search.
+    """
+    # validate particle and interpolation inputs
+    if isinstance(qty, tuple):
+        qty = qty[0] if len(qty) == 1 else np.column_stack(qty)
+    qty = np.asarray(qty, dtype=np.float64)
+    if qty.ndim not in (1, 2):
+        raise ValueError('qty must be a one- or two-dimensional particle array.')
+    multiple_output = qty.ndim == 2
+    n_quantities = 1 if qty.ndim == 1 else qty.shape[1]
+    qty_values = qty[:, None] if qty.ndim == 1 else qty
+    mins = np.asarray(mins, dtype=np.float64)
+    maxs = np.asarray(maxs, dtype=np.float64)
+    dims = np.asarray([128, 128] if dims is None else dims, dtype=np.int64)
+    D = mins.size
+    assert D == maxs.size, 'mins and maxs must have the same number of dimensions.'
+    assert D in (1, 2, 3), 'Only 1D, 2D, and 3D grids are supported.'
+    d = dims.size
+    assert d in (1, 2, 3), 'Only 1D, 2D, and 3D grids are supported.'
+    if pos is not None:
+        pos = np.asarray(pos, dtype=np.float64)
+        assert pos.ndim == 2, 'pos must be a two-dimensional array of particle positions.'
+        assert pos.shape[0] == qty.shape[0], 'pos must have the same number of rows as qty has elements.'
+        assert pos.shape[1] >= len(dims), 'pos must have at least as many columns as the number of grid dimensions.'
+        assert pos.shape[1] == D, 'pos must have the same number of columns as the number of grid dimensions.'
+    if sample_dims is None:
+        sample_dims = np.copy(dims)
+        over_sampled_other_dim = max(1, int(np.prod(dims)**(1.0/(D*len(dims)))))
+        sample_dims = np.append(sample_dims, [over_sampled_other_dim,] * (D - len(sample_dims)))
+    else:
+        sample_dims = np.asarray(sample_dims, dtype=np.int64)
+    if weight is not None:
+        weight = np.asarray(weight, dtype=np.float64)
+        if weight.shape != (qty.shape[0],):
+            raise ValueError('weight must have one value per particle.')
+    if tree is None:
+        if pos is None:
+            raise ValueError('Either pos or tree must be supplied.')
+        pos = np.asarray(pos, dtype=np.float64)
+        if pos.ndim != 2 or pos.shape[0] != qty.shape[0]:
+            raise ValueError('pos must have one row for every quantity value.')
+        from scipy.spatial import cKDTree
+        tree = cKDTree(pos)
+    if grid_to_particle is None:
+        grid_to_particle = lambda g: g
+
+    # validate sampling-grid geometry
+    if mins.ndim != 1 or maxs.shape != mins.shape or sample_dims.shape != mins.shape:
+        raise ValueError('mins, maxs, and sample_dims must be one-dimensional arrays of equal length.')
+    if dims.ndim != 1 or d > mins.size:
+        raise ValueError('dims must describe no more dimensions than the sampling grid.')
+    if np.any(maxs <= mins) or np.any(dims <= 0) or np.any(sample_dims <= 0):
+        raise ValueError('Grid bounds and dimensions must be positive and ordered.')
+    if n_batches < 1:
+        raise ValueError('n_batches must be at least one.')
+    if sampling not in ('random', 'sobol'):
+        raise ValueError("sampling must be either 'random' or 'sobol'.")
+    if log_every < 1:
+        raise ValueError('log_every must be at least one.')
+    if save_callback is not None and (save_every is None or save_every < 1):
+        raise ValueError('save_every must be at least one when save_callback is supplied.')
+    if query_chunk_size is not None and query_chunk_size < 1:
+        raise ValueError('query_chunk_size must be positive or None.')
+    if eta_update_seconds <= 0:
+        raise ValueError('eta_update_seconds must be positive.')
+
+    # select map cells that require sampling
+    if sample_mask is None:
+        sample_mask = np.ones(tuple(dims), dtype=bool)
+    else:
+        sample_mask = np.asarray(sample_mask, dtype=bool)
+        if sample_mask.shape != tuple(dims):
+            raise ValueError('sample_mask must have shape dims.')
+
+    # construct sample cells directly for small maps and lazily for large maps
+    axes = [np.linspace(mn, mx, n, endpoint=False) for mn, mx, n in zip(mins, maxs, sample_dims)]
+    sample_total = int(np.prod(sample_dims))
+    chunk_size = sample_total if query_chunk_size is None else query_chunk_size
+    if sample_total <= chunk_size:
+        grid_pos = np.stack(np.meshgrid(*axes, indexing='ij'), axis=-1).reshape(-1, mins.size)
+        map_index = ((grid_pos[:, :d] - mins[:d]) * dims / (maxs[:d] - mins[:d])).astype(np.int64)
+        np.minimum(map_index, dims - 1, out=map_index)
+        sample_mask_flat = sample_mask[tuple(map_index.T)]
+    else:
+        grid_pos = None
+        sample_mask_flat = None
+    shape = tuple(dims)
+    grid_shape = (n_quantities,) + shape if multiple_output else shape
+    if sample_mask_flat is not None and not np.any(sample_mask_flat):
+        sampled_grid = np.full(grid_shape, np.nan)
+        grid_err = np.full(grid_shape, np.nan)
+        state = {'mean': np.zeros(grid_shape), 'm2': np.zeros(grid_shape), 'batches': np.zeros(grid_shape, dtype=np.int64)}
+        return (sampled_grid, grid_err, state) if ret_state else (sampled_grid, grid_err)
+
+    # initialize batched sampled moments
+    rng = np.random.default_rng(rng)
+    sample_width = (maxs - mins) / sample_dims
+    if sample_state is None:
+        sample_mean = np.zeros(grid_shape)
+        sample_m2 = np.zeros(grid_shape)
+        sample_batches = np.zeros(grid_shape, dtype=np.int64)
+    else:
+        sample_mean = np.asarray(sample_state['mean'], dtype=np.float64).copy()
+        sample_m2 = np.asarray(sample_state['m2'], dtype=np.float64).copy()
+        sample_batches = np.asarray(sample_state['batches'], dtype=np.int64).copy()
+        if sample_mean.shape != grid_shape or sample_m2.shape != grid_shape or sample_batches.shape != grid_shape:
+            raise ValueError('sample_state arrays must have shape dims or (n_quantities, *dims).')
+    previous_batches = int(np.max(sample_batches))
+
+    # initialize random or low-discrepancy intra-cell jitters
+    if sampling == 'sobol':
+        from scipy.stats import qmc
+        sobol = qmc.Sobol(d=mins.size, scramble=True, seed=rng)
+        if previous_batches:
+            sobol.fast_forward(previous_batches)
+        sobol_jitter = sobol.random_base2(int(np.log2(n_batches))) if not previous_batches and n_batches & (n_batches - 1) == 0 else sobol.random(n_batches)
+
+    # initialize optional progress timers
+    if log:
+        import time
+        time_spent_on_sampling = 0.0
+        time_spent_on_query = 0.0
+        time_spent_on_qty_calc = 0.0
+        time_spent_on_bin = 0.0
+        start_time = time.time()
+        last_eta_update = start_time
+    total_chunks = max(1, int(np.ceil(sample_total/chunk_size)))
+
+    # print progress during long chunked batches
+    def report_eta(progress, force=False):
+        nonlocal last_eta_update
+        if not log:
+            return
+        now = time.time()
+        if force or now - last_eta_update >= eta_update_seconds:
+            elapsed_time = now - start_time
+            eta = elapsed_time * (n_batches - progress) / progress
+            eta_str = f'ETA {int(eta // 3600):02d}:{int((eta % 3600) // 60):02d}:{int(eta % 60):02d} / total ETA {elapsed_time*n_batches/progress/60:.2f} min'
+            if save_callback is not None:
+                eta_str += ' (saved {} times)'.format(int(progress) // save_every)
+            print(f'\r{eta_str}', end='', flush=True)
+            last_eta_update = now
+
+    for batch in range(n_batches):
+        # construct query chunks and jitter points within their sample cells
+        if log:
+            batch_start_time = time.time()
+        if sample_mask_flat is not None:
+            jitter = rng.uniform(0.0, sample_width, size=(sample_mask_flat.sum(), mins.size)) if sampling == 'random' else sobol_jitter[batch] * sample_width
+            query_grid_pos = grid_pos[sample_mask_flat] + jitter
+            query_real_pos = np.asarray(grid_to_particle(query_grid_pos), dtype=np.float64)
+            if query_real_pos.shape != query_grid_pos.shape:
+                raise ValueError('grid_to_particle must preserve the coordinate array shape.')
+            query_chunks = ((query_grid_pos, query_real_pos),)
+        else:
+            def query_chunks():
+                for chunk_start in range(0, sample_total, chunk_size):
+                    chunk_stop = min(chunk_start + chunk_size, sample_total)
+                    flat_index = np.arange(chunk_start, chunk_stop)
+                    sample_index = np.column_stack(np.unravel_index(flat_index, tuple(sample_dims)))
+                    chunk_grid_pos = mins + sample_index*sample_width
+                    map_index = ((chunk_grid_pos[:, :d] - mins[:d]) * dims / (maxs[:d] - mins[:d])).astype(np.int64)
+                    np.minimum(map_index, dims - 1, out=map_index)
+                    chunk_mask = sample_mask[tuple(map_index.T)]
+                    if not np.any(chunk_mask):
+                        continue
+                    chunk_grid_pos = chunk_grid_pos[chunk_mask]
+                    jitter = rng.uniform(0.0, sample_width, size=chunk_grid_pos.shape) if sampling == 'random' else sobol_jitter[batch] * sample_width
+                    chunk_grid_pos += jitter
+                    chunk_real_pos = np.asarray(grid_to_particle(chunk_grid_pos), dtype=np.float64)
+                    if chunk_real_pos.shape != chunk_grid_pos.shape:
+                        raise ValueError('grid_to_particle must preserve the coordinate array shape.')
+                    yield chunk_grid_pos, chunk_real_pos
+            query_chunks = query_chunks()
+
+        # process interpolation queries in bounded chunks to limit neighbor-list memory
+        if log:
+            time_spent_on_sampling += time.time() - batch_start_time
+            batch_start_time = time.time()
+        batch_sum = np.zeros(grid_shape)
+        batch_weight = np.zeros(shape)
+        for chunk_number, (chunk_grid_pos, chunk_real_pos) in enumerate(query_chunks):
+            if approx:
+                neighbours_idx, W = mfm_value_at_pos(chunk_real_pos, tree=tree, ret_neighbours=True,
+                                                      approx=True, N_NGB=N_NGB, workers=workers,
+                                                      distance_upper_bound=distance_upper_bound)
+            else:
+                neighbours_idx, W, converged, _ = mfm_value_at_pos(chunk_real_pos, tree=tree, ret_neighbours=True,
+                                                                     ret_convergence_info=True, approx=False, N_NGB=N_NGB,
+                                                                     workers=workers, distance_upper_bound=distance_upper_bound)
+                chunk_grid_pos = chunk_grid_pos[converged]
+                neighbours_idx = neighbours_idx[converged]
+                W = W[converged]
+            if log:
+                time_spent_on_query += time.time() - batch_start_time
+                batch_start_time = time.time()
+
+            # interpolate particle values and bin the current query chunk
+            kernel_sum = W.sum(axis=1)
+            valid = kernel_sum > 0
+            chunk_grid_pos = chunk_grid_pos[valid]
+            neighbours_idx = neighbours_idx[valid]
+            W = W[valid]
+            kernel_sum = kernel_sum[valid]
+            query_qty = np.sum(qty_values[neighbours_idx] * W[..., None], axis=1) / kernel_sum[:, None]
+            if weight is None:
+                query_weight = np.ones(query_qty.shape[0])
+            else:
+                query_weight = np.sum(weight[neighbours_idx] * W, axis=1) / kernel_sum
+            if log:
+                time_spent_on_qty_calc += time.time() - batch_start_time
+                batch_start_time = time.time()
+            query_values = query_qty * query_weight[:, None] if multiple_output else query_qty[:, 0] * query_weight
+            binned = bin_particles_direct(chunk_grid_pos[:, :d], query_values, query_weight,
+                                          mins=mins[:d], maxs=maxs[:d], dims=dims)
+            batch_sum += binned[:-1] if multiple_output else binned[0]
+            batch_weight += binned[-1] if multiple_output else binned[1]
+            report_eta(batch + (chunk_number + 1)/total_chunks)
+
+        # calculate the complete sampled map for this batch
+        batch_grid = np.full(grid_shape, np.nan)
+        np.divide(batch_sum, batch_weight, out=batch_grid, where=batch_weight != 0)
+        del batch_sum, batch_weight
+        valid = np.isfinite(batch_grid)
+        next_batches = sample_batches[valid] + 1
+        delta = batch_grid[valid] - sample_mean[valid]
+        sample_mean[valid] += delta / next_batches
+        sample_m2[valid] += delta * (batch_grid[valid] - sample_mean[valid])
+        sample_batches[valid] = next_batches
+
+        # report batch progress and estimated completion time
+        if log:
+            time_spent_on_bin += time.time() - batch_start_time
+            if (batch + 1) % log_every == 0 or batch + 1 == n_batches:
+                report_eta(batch + 1, force=True)
+        if save_callback is not None and ((batch + 1) % save_every == 0 or batch + 1 == n_batches):
+            sampled_grid = np.where(sample_batches != 0, sample_mean, np.nan)
+            grid_err = np.full(shape, np.nan)
+            valid_error = sample_batches > 1
+            grid_err[valid_error] = np.sqrt(np.maximum(sample_m2[valid_error], 0.0) / (sample_batches[valid_error] * (sample_batches[valid_error] - 1)))
+            save_callback(sampled_grid, grid_err, {'mean': sample_mean, 'm2': sample_m2, 'batches': sample_batches}, batch + 1)
+
+    # calculate the sampled mean and its batch standard error
+    sampled_grid = np.where(sample_batches != 0, sample_mean, np.nan)
+    grid_err = np.full(grid_shape, np.nan)
+    valid = sample_batches > 1
+    grid_err[valid] = np.sqrt(np.maximum(sample_m2[valid], 0.0) / (sample_batches[valid] * (sample_batches[valid] - 1)))
+
+    # report the sampling timing breakdown
+    if log:
+        total_time = time.time() - start_time
+        other_time = total_time - time_spent_on_sampling - time_spent_on_query - time_spent_on_qty_calc - time_spent_on_bin
+        print()
+        print(f'Total time spent: {total_time:.2f} seconds')
+        print(f' > Time spent on sampling: {time_spent_on_sampling:.2f} seconds ({time_spent_on_sampling/total_time*100:.2f}%)')
+        print(f' > Time spent on queries: {time_spent_on_query:.2f} seconds ({time_spent_on_query/total_time*100:.2f}%)')
+        print(f' > Time spent on quantity calculations: {time_spent_on_qty_calc:.2f} seconds ({time_spent_on_qty_calc/total_time*100:.2f}%)')
+        print(f' > Time spent on quantity binning: {time_spent_on_bin:.2f} seconds ({time_spent_on_bin/total_time*100:.2f}%)')
+        print(f' > Time spent on other misc tasks: {other_time:.2f} seconds ({other_time/total_time*100:.2f}%)')
+    state = {'mean': sample_mean, 'm2': sample_m2, 'batches': sample_batches}
+    return (sampled_grid, grid_err, state) if ret_state else (sampled_grid, grid_err)
+
+
+
+def bin_particles_hybrid(pos, qty, mins, maxs, weight=None, dims=None, sample_dims=None,
+                         tree=None, particle_to_grid=None, grid_to_particle=None,
+                         n_batches=128, transition_occupancy=16, sample_eps=0.1, rng=None, sampling='random',
+                         approx=True, N_NGB=32, workers=-1, distance_upper_bound=np.inf, 
+                         ret_components=False, log=False, log_every=1, save_path=None, save_every=10,
+                         query_chunk_size=250_000, eta_update_seconds=5.0, _test_size=1000):
+    """
+    Blend a directly binned particle map with an interpolated sampled map.
+
+    If you set sampling to sobol, make sure that the number of batches is a power of two for best results. 
+    Dimensions is the number of cells in each dimension of the grid. Sample dimensions is the number of samples in each dimension.
+    Sample epsilon is the cutoff below which the fractional weight of the sampling grid is considered negligible and we do not sample that cell.
+    """
+    # validate particle and blending inputs
+    pos = np.asarray(pos, dtype=np.float64)
+    if isinstance(qty, tuple):
+        qty = qty[0] if len(qty) == 1 else np.column_stack(qty)
+    qty = np.asarray(qty, dtype=np.float64)
+    if pos.ndim != 2 or qty.ndim not in (1, 2) or pos.shape[0] != qty.shape[0]:
+        raise ValueError('pos and qty must contain the same number of particles; qty may be one- or two-dimensional.')
+    multiple_output = qty.ndim == 2
+    n_quantities = 1 if qty.ndim == 1 else qty.shape[1]
+    if weight is not None and np.asarray(weight).shape != (qty.shape[0],):
+        raise ValueError('weight must have one value per particle.')
+    if transition_occupancy <= 0 or not 0 < sample_eps < 1:
+        raise ValueError('transition_occupancy must be positive and sample_eps must be in (0, 1).')
+    if save_path and save_every < 1:
+        raise ValueError('save_every must be at least one when save_path is supplied.')
+    rng = np.random.default_rng(rng)
+    if particle_to_grid is None:
+        particle_to_grid = lambda p: p
+    if grid_to_particle is None:
+        grid_to_particle = lambda g: g
+    if _test_size > 0:
+        _test_subset = rng.choice(pos, size=min(_test_size, pos.shape[0]), replace=False, axis=0) # minimal test, you should test it on the whole pos array to be sure
+        if not np.isclose(grid_to_particle(particle_to_grid(_test_subset)), _test_subset).all():
+            raise ValueError('Your particle to grid and grid to particle functions are not consistent with each other!')
+    if tree is None:
+        if pos.ndim != 2 or pos.shape[0] != qty.shape[0]:
+            raise ValueError('pos must have one row for every quantity value.')
+        from scipy.spatial import cKDTree
+        print('Building KD-tree for particle positions...')
+        tree = cKDTree(pos)
+
+    # directly bin particle values and particle counts
+    if log:
+        import time
+        start_time = time.time()
+    mins = np.asarray(mins, dtype=np.float64)
+    maxs = np.asarray(maxs, dtype=np.float64)
+    dims = np.asarray([128, 128] if dims is None else dims, dtype=np.int64)
+    if sample_dims is None:
+        sample_dims = np.copy(dims)
+        sample_dims = np.append(sample_dims, [max(1, int(np.prod(dims)**(1.0/(mins.size*dims.size))))] * (mins.size - dims.size))
+    else:
+        sample_dims = np.asarray(sample_dims, dtype=np.int64)
+    grid_pos = np.asarray(particle_to_grid(pos), dtype=np.float64)
+    if grid_pos.ndim != 2 or grid_pos.shape[0] != qty.shape[0] or grid_pos.shape[1] < dims.size:
+        raise ValueError('particle_to_grid must return one grid-coordinate row per particle.')
+    particle_weight = np.ones(qty.shape[0]) if weight is None else np.asarray(weight, dtype=np.float64)
+    weighted_qty = qty*particle_weight[:, None] if qty.ndim == 2 else qty*particle_weight
+    particle_count_input = np.ones(qty.shape[0])
+    binned = bin_particles_direct(grid_pos[:, :dims.size], weighted_qty, particle_weight, particle_count_input,
+                                  mins=mins[:dims.size], maxs=maxs[:dims.size], dims=dims)
+    grid_shape = (n_quantities,) + tuple(dims) if multiple_output else tuple(dims)
+    direct_grid = np.zeros(grid_shape)
+    direct_weight_grid = binned[n_quantities] if multiple_output else binned[1]
+    direct_sum = binned[:n_quantities] if multiple_output else binned[0]
+    np.divide(direct_sum, direct_weight_grid, out=direct_grid, where=direct_weight_grid != 0)
+    particle_count = binned[n_quantities + 1] if multiple_output else binned[2]
+
+    # sample low-occupancy cells and blend valid sampled estimates
+    max_sample_occupancy = np.maximum(1, transition_occupancy * (1.0 / sample_eps - 1.0))
+    sample_mask = particle_count < max_sample_occupancy
+
+    # initialize resumable sampling state
+    sample_state = None
+    if save_path:
+        import json, os
+        from pathlib import Path
+        save_path = Path(save_path)
+        metadata = {
+            'version': 1,
+            'mins': mins.tolist(),
+            'maxs': maxs.tolist(),
+            'dims': dims.tolist(),
+            'sample_dims': sample_dims.tolist(),
+            'n_batches': n_batches,
+            'transition_occupancy': transition_occupancy,
+            'sample_eps': sample_eps,
+            'sampling': sampling,
+            'approx': approx,
+            'N_NGB': N_NGB,
+            'n_particles': pos.shape[0],
+            'weighted': weight is not None,
+            'n_quantities': n_quantities,
+        }
+        if save_path.exists():
+            with np.load(save_path, allow_pickle=False) as previous:
+                previous_metadata = json.loads(str(previous['metadata'].item()))
+                metadata_match = all(previous_metadata.get(key) == value for key, value in metadata.items() if key != 'n_batches')
+                mask_match = 'sample_mask' in previous and np.array_equal(previous['sample_mask'], sample_mask)
+                if not metadata_match or not mask_match:
+                    raise ValueError(f'Existing save file {save_path} has incompatible metadata.')
+                required_state = ('sample_mean', 'sample_m2', 'sample_batches')
+                if not all(key in previous for key in required_state):
+                    raise ValueError(f'Existing save file {save_path} does not contain resumable sampling state.')
+                sample_state = {'mean': previous['sample_mean'], 'm2': previous['sample_m2'], 'batches': previous['sample_batches']}
+                if log:
+                    print(f'Found compatible previous result at {save_path} with {previous["sample_batches"].max()} batches; combining it with this run.')
+
+    # blend direct and sampled estimates
+    direct_weight = particle_count / (particle_count + transition_occupancy)
+    def blend_sampled(sampled_grid, grid_err):
+        sample_valid = np.isfinite(sampled_grid)
+        blend_mask = sample_mask & sample_valid
+        grid = direct_grid.copy()
+        if not multiple_output:
+            grid[blend_mask] = (direct_weight[blend_mask] * direct_grid[blend_mask]
+                                + (1.0 - direct_weight[blend_mask]) * sampled_grid[blend_mask])
+        else:
+            blend_mask = np.broadcast_to(blend_mask, grid_shape)
+            direct_weight_broadcast = np.broadcast_to(direct_weight, grid_shape)
+            grid[blend_mask] = (direct_weight_broadcast[blend_mask] * direct_grid[blend_mask]
+                                + (1.0 - direct_weight_broadcast[blend_mask]) * sampled_grid[blend_mask])
+        grid_err = grid_err.copy()
+        grid_err[~blend_mask] = 0.0
+        if not multiple_output:
+            grid_err[blend_mask] *= 1.0 - direct_weight[blend_mask]
+        else:
+            grid_err[blend_mask] *= 1.0 - np.broadcast_to(direct_weight, grid_shape)[blend_mask]
+        return grid, grid_err, sample_valid, blend_mask
+
+    # save atomic checkpoints with the running sampling state
+    def save_checkpoint(sampled_grid, grid_err, state, completed_batches):
+        grid, grid_err, _, _ = blend_sampled(sampled_grid, grid_err)
+        checkpoint_metadata = metadata | {'n_batches': int(np.max(state['batches']))}
+        temporary_path = save_path.with_suffix(save_path.suffix + '.tmp')
+        with open(temporary_path, 'wb') as file:
+            np.savez(file, grid=grid, grid_err=grid_err, direct_grid=direct_grid, sampled_grid=sampled_grid,
+                     particle_count=particle_count, sample_mask=sample_mask, sample_mean=state['mean'],
+                     sample_m2=state['m2'], sample_batches=state['batches'], metadata=json.dumps(checkpoint_metadata))
+        os.replace(temporary_path, save_path)
+
+    # sample low-occupancy cells
+    sampled_grid, grid_err, sample_state = sample_particles_grid(
+        qty, mins, maxs, pos=pos, tree=tree, weight=weight, dims=dims, grid_to_particle=grid_to_particle,
+        sample_dims=sample_dims, sample_mask=sample_mask, n_batches=n_batches, approx=approx,
+        N_NGB=N_NGB, workers=workers, distance_upper_bound=distance_upper_bound, rng=rng,
+        sampling=sampling, log=log, log_every=log_every, sample_state=sample_state, ret_state=True,
+        save_every=save_every if save_path else None, save_callback=save_checkpoint if save_path else None,
+        query_chunk_size=query_chunk_size,
+        eta_update_seconds=eta_update_seconds,
+    )
+    grid, grid_err, sample_valid, blend_mask = blend_sampled(sampled_grid, grid_err)
+    if log:
+        print(f'Hybrid grid finished in {time.time() - start_time:.2f} seconds.')
+
+    # save an empty-sample result that did not invoke the callback
+    if save_path and not np.any(sample_mask):
+        save_checkpoint(sampled_grid, grid_err, sample_state, 0)
+
+    # return either compact results or diagnostics for inspection
+    if not ret_components:
+        return grid, grid_err
+    return {
+        'grid': grid,
+        'grid_err': grid_err,
+        'direct_grid': direct_grid,
+        'sampled_grid': sampled_grid,
+        'particle_count': particle_count,
+        'direct_weight': direct_weight,
+        'sample_mask': sample_mask,
+        'sample_valid': sample_valid,
+    }
