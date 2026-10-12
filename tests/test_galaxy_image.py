@@ -83,12 +83,11 @@ class TestGalaxyImage(unittest.TestCase):
         np.testing.assert_array_equal(result['rgb'], plotted['rgb'])
         np.testing.assert_array_equal(result['channels'], plotted['channels'])
 
-    def test_save_without_display_or_modifying_other_figures(self):
-        fig, ax = plt.subplots()
-        ax.plot([0., 1.], [1., 0.])
-        figures = plt.get_fignums()
+    def test_save_without_display_reuses_current_axes(self):
         with tempfile.TemporaryDirectory() as directory, plt.rc_context({'savefig.dpi': 40, 'text.usetex': False}):
             for use_path in (False, True):
+                fig, ax = plt.subplots()
+                ax.plot([0., 1.], [1., 0.])
                 path = Path(directory)/f'galaxy_{use_path}.png'
                 with patch.object(plt, 'show', side_effect=AssertionError('Unexpected display')):
                     result = galaxy.galaxy_image(datacube=self.datacube, plot=path if use_path else str(path))
@@ -98,10 +97,10 @@ class TestGalaxyImage(unittest.TestCase):
                 style = jv.DEFAULT_CUSTOM_SUBPLOT_SETTINGS
                 width = jv.construct_paper_figsize(style['fig_style'], subtype=style['fig_substyle'], aspect=style['fig_aspect'])[0]
                 self.assertEqual(pixels.shape[1], round(width*40))
-                self.assertEqual(plt.get_fignums(), figures)
-                self.assertIsNot(result['ax'], ax)
+                self.assertFalse(plt.fignum_exists(fig.number))
+                self.assertIs(result['ax'], ax)
                 np.testing.assert_array_equal(result['image'].get_array(), result['rgb'])
-        self.assertEqual(len(ax.lines), 1); self.assertEqual(len(ax.images), 0)
+        self.assertEqual(len(ax.lines), 1); self.assertEqual(len(ax.images), 1)
 
     def test_save_supplied_axes_and_validate_plot(self):
         fig, ax = plt.subplots()

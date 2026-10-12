@@ -169,7 +169,6 @@ DEFAULT_CUSTOM_SUBPLOT_SETTINGS = {
     # > colorbar
     'colorbar_label': None,
     'colorbar_on_fig': False,    # True -> colorbar on figure, False -> colorbar on subplots
-    'new_figure': False,        # create a separate figure when no axes are supplied
     'colorbar_rcparams': {},     # things set here will override other rc parameter settings for the colorbar only
     
     # closing settings
@@ -405,7 +404,6 @@ def basic_figure_wrapper(**wrapper_settings):
                     plt.clf()
 
                 if ax is None:
-                    if custom_settings['new_figure']: plt.figure()
                     ax = plt.gca()  # will create a figure/axes if one does not exist, otherwise grab the current one
                     assert ax is not None, 'Failed to create axes.'
                 
