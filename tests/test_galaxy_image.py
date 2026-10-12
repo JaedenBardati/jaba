@@ -66,8 +66,9 @@ class TestGalaxyImage(unittest.TestCase):
     def test_plot_explicitly_displays_with_interactive_mode_disabled(self):
         with plt.ioff(), patch.object(plt, 'show') as show:
             result = galaxy.galaxy_image(datacube=self.datacube, plot=True)
-            show.assert_called_once_with(block=False)
+            show.assert_called_once_with()
         self.assertIsNotNone(result['figure'])
+        self.assertIn(result['image'], result['ax'].images)
 
     def test_no_plot_preserves_image_data_and_existing_axes(self):
         fig, ax = plt.subplots()

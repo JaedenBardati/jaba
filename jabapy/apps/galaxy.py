@@ -87,16 +87,13 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
 
     # reuse the visual helper's saving options and suppress interactive display during export
     from ..utils import visual as jv
-    import matplotlib.pyplot as plt
     output = Path(plot) if isinstance(plot, (str, Path)) else None
     if title is None: title = 'Approximate visible RGB' if tuple(bands) == ('RGB.R', 'RGB.G', 'RGB.B') else ' / '.join(bands)+' (false color)'
-    with plt.ioff():
-        if output is not None and ax is None: _, ax = plt.subplots()
-        image = jv.imshow(rgb, ax=ax, origin='lower', extent=extent.value, aspect='equal',
-                          xlabel='x [kpc]', ylabel='y [kpc]', title=title, show_colorbar=False,
-                          out=output, show=False, clf_after=False, close_after=output is not None)
+    image = jv.imshow(rgb, ax=ax, origin='lower', extent=extent.value, aspect='equal',
+                      xlabel='x [kpc]', ylabel='y [kpc]', title=title, show_colorbar=False,
+                      out=output, show=output is None, new_figure=ax is None,
+                      clf_after=False, close_after=output is not None)
     result.update(figure=image.figure, ax=image.axes, image=image)
-    if output is None: plt.show(block=False)
     return result
 
 
