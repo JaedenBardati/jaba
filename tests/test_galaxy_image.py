@@ -63,6 +63,12 @@ class TestGalaxyImage(unittest.TestCase):
         with self.assertRaises(ValueError): galaxy.galaxy_image(object(), datacube=self.datacube)
         with self.assertRaises(ValueError): galaxy.galaxy_image(datacube=self.datacube, npix=8)
 
+    def test_plot_explicitly_displays_with_interactive_mode_disabled(self):
+        with plt.ioff(), patch.object(plt, 'show') as show:
+            result = galaxy.galaxy_image(datacube=self.datacube, plot=True)
+            show.assert_called_once_with(block=False)
+        self.assertIsNotNone(result['figure'])
+
     def test_no_plot_preserves_image_data_and_existing_axes(self):
         fig, ax = plt.subplots()
         ax.plot([0., 1.], [1., 0.])

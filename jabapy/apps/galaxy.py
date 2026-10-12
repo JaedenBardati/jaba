@@ -36,7 +36,7 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
 
     Returns rgb (y, x, 3), unstretched band-averaged channels with I_lambda units per micron,
     extent in kpc, bands, component, scale, figure, ax and the Matplotlib image artist.
-    plot=True keeps the figure open for notebook display/saving, optionally on ax.
+    plot=True displays the figure, optionally on ax; the returned figure can be saved.
     plot=False returns image data without plotting; figure, ax and image are None.
     A filename or Path saves the plot without displaying it and closes the saved figure
     (including a supplied ax's figure); the returned figure object remains usable.
@@ -96,6 +96,7 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
                           xlabel='x [kpc]', ylabel='y [kpc]', title=title, show_colorbar=False,
                           out=output, show=False, clf_after=False, close_after=output is not None)
     result.update(figure=image.figure, ax=image.axes, image=image)
+    if output is None: plt.show(block=False)
     return result
 
 
