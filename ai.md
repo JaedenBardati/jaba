@@ -73,12 +73,45 @@ Jaba is a personal research toolkit for astrophysical simulation analysis, prima
 
 ## Typical workflow
 
-Use this as a rough template for a path of thought when adding a computational time- or memory-intensive feature:
+Use this as a rough template for the development process when implementing a new feature, particularly one that is computationally time- or memory-intensive. Adapt the workflow to the complexity of the task; not every change requires every stage.
 
-0) Understanding stage: Define what you need (prompt user for any specifics or approximations that you may need to make if it is not clear). Break down what you need to do in concrete steps.
-1) Research stage: Look around for any relevant functions, classes or other code that can be re-used in your code. Do not re-invent the wheel.
-2) Proto-typing stage: Make a working change to the code that does the desired behaviour that can serve as a baseline.
-3) Testing stage: Test the code and iterate until desired behaviour is reached. Add an explicit testing suite in `tests` whenever it is a large enough or relevant enough piece of code to do so.
-4) Efficiency stage: Determine whether it is computational time- and/or memory-limited and what is causing the majority of the slowdown. If it is possible, make the relevant code more efficient and/or parallelized. Iterate until desired behaviour is reached in a reasonable time/memory constraint. Optimize around the desired use case of the user.
-5) Documentation stage: Update `ai.md`, `README.md`, and other documentation if relevant and significant enough changes were made, but let the user view the change diff. You may also make changes if you deem it will make you more efficient at completing the users tasks.
-6) Suggestion stage: You may suggest some approximations or assumptions if they would make it significantly faster, but do not implement them in the code unless user also agrees. You may also suggest structural changes that might help with organization.
+0) **Understanding stage:** Define the desired functionality, expected inputs and outputs, constraints, and acceptable approximations. Ask the user for clarification when essential details are missing or not clear (remember you can infer some details from existing architecture). Break the task down into concrete, manageable steps and identify potential challenges before beginning.
+
+1) **Research stage:** Explore the existing codebase for relevant functions, classes, utilities, and established coding patterns that can be reused. Understand how the proposed change interacts with existing functionality, dependencies, and data structures. Do not reinvent the wheel or introduce unnecessary complexity.
+
+2) **Proto-typing stage:** Implement a simple, working version of the feature that achieves the desired behavior. Prioritize correctness, readability, and compatibility with the existing code over performance at this stage. Establish a functional baseline before attempting significant optimizations.
+
+3) **Testing stage:** Verify that the implementation produces the expected results, including edge cases, numerical accuracy, and compatibility with existing functionality. Compare against analytical solutions, known results, or the previous implementation where possible. Iterate until the desired behavior is achieved. Add appropriate automated tests in tests/ for sufficiently significant changes, and ensure existing tests continue to pass.
+
+4) **Efficiency stage:** Profile or benchmark the working implementation to determine whether it is computationally time- and/or memory-limited, and identify the dominant bottlenecks. Prioritize optimizations with the greatest expected impact, such as improving algorithms, reducing redundant calculations, minimizing allocations, improving memory access patterns, or introducing parallelization. Avoid premature optimization and unnecessary complexity. After each significant optimization, verify that correctness is preserved and measure the actual improvement. Optimize primarily for the user's intended use cases, representative input sizes, and available hardware.
+
+5) **Clean up stage:** Remove temporary files, debugging statements, unused variables, obsolete code, and experimental implementations that are no longer needed. Avoid leaving unnecessary dependencies or configuration changes. Ensure that the final implementation is readable, maintainable, and consistent with the surrounding codebase. Do not delete unrelated files or user data.
+
+6) **Documentation stage:** Update `README.md`, `ai.md`, and other relevant documentation when changes are sufficiently significant. Document new functionality, interfaces, dependencies, configuration options, limitations, and important implementation decisions as appropriate. Keep documentation concise and consistent with the actual code. Allow the user to review documentation changes through the diff. You may also improve project instructions or documentation when doing so would meaningfully improve the efficiency or reliability of future development tasks.
+
+7) **Review stage:** Review the final diff for unintended modifications, regressions, unnecessary complexity, and opportunities for simplification. Run relevant tests and benchmarks one final time. Summarize what changed, the tests performed and their results, any measured performance improvements, and any remaining limitations. Clearly distinguish between verified results and untested assumptions. Do not claim that tests passed or performance improved without having verified them. Commit git changes or push to Github when relevant.
+
+8) **Suggestion stage:** Suggest potential approximations, assumptions, or alternative algorithms that could significantly improve performance, memory usage, or maintainability, but do not implement changes that materially affect accuracy or expected behavior without the user's approval. You may also suggest larger structural or organizational improvements, especially when they would make future development easier. Keep these suggestions separate from the completed implementation rather than expanding the scope unnecessarily.
+
+
+## General principles
+
+- **Correctness before performance:** Establish and verify a working baseline before optimizing. Never sacrifice correctness for speed without explicitly discussing the tradeoff with the user.
+
+- **Measure before optimizing:** Use profiling, benchmarks, and representative workloads to guide performance improvements rather than relying on assumptions.
+
+- **Prefer minimal, targeted changes:** Reuse existing infrastructure and avoid unnecessary refactoring or changes to unrelated functionality.
+
+- **Preserve existing behavior:** Maintain backward compatibility unless a change is explicitly requested or necessary. Identify and communicate any unavoidable breaking changes.
+
+- **Numerical robustness:** For scientific or numerical code, consider floating-point precision, convergence, conservation properties, boundary conditions, and reproducibility where applicable.
+
+- **Scalability:** Consider how computational cost and memory requirements scale with problem size. Prefer algorithms that remain practical for realistic workloads, not just small test cases.
+
+- **Parallelization with care:** Account for synchronization overhead, race conditions, thread safety, load balancing, and memory duplication when introducing parallelism.
+
+- **Avoid unnecessary dependencies:** Prefer existing libraries and standard functionality unless a new dependency provides a clear benefit.
+
+- **Respect the user's scope:** Do not introduce speculative features, approximations, or broad architectural changes without a compelling reason or explicit approval.
+
+- **Communicate meaningful decisions:** Explain important design choices, tradeoffs, limitations, and deviations from the original request without overwhelming the user with routine implementation details.
