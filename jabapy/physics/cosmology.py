@@ -51,6 +51,35 @@ def time_since_bigbang(z, h=c.DEFAULT_h, Ode0=c.DEFAULT_Ode0, Om0=c.DEFAULT_Om0,
         raise Exception("Error is too high compared to the inferred time (ratio is {})".format(error/result))
     return inv_H0*result
 
+
+def scale_factor_to_time(scale_factor, h=c.DEFAULT_h, Ode0=c.DEFAULT_Ode0, Om0=c.DEFAULT_Om0,
+                         Or0=c.DEFAULT_Or0, Ok0=c.DEFAULT_Ok0, tol=1e-3):
+    """Return cosmic ages in Gyr for scalar or array scale factors.
+
+    Nonpositive stellar-formation flags are retained as nonpositive Gyr values;
+    nonfinite inputs return NaN. Matter/Lambda cosmologies with consistent density
+    parameters use vectorized Astropy ages. Other parameter sets use the same
+    integral as time_since_bigbang, evaluated once per distinct positive scale factor.
+    """
+    from astropy.cosmology import LambdaCDM
+
+    # preserve formation flags and convert only finite positive scale factors
+    scale_factor = np.asarray(scale_factor, dtype=float)
+    valid = np.isfinite(scale_factor) & (scale_factor > 0)
+    age = np.full(scale_factor.shape, np.nan)
+    flags = np.isfinite(scale_factor) & (scale_factor <= 0)
+    age[flags] = scale_factor[flags]
+    if np.any(valid):
+        if Or0 == 0 and np.isclose(Ok0, 1-Om0-Ode0, rtol=0, atol=1e-14):
+            cosmology = LambdaCDM(H0=100*h, Om0=Om0, Ode0=Ode0, Tcmb0=0)
+            age[valid] = cosmology.age(1/scale_factor[valid]-1).to_value(u.Gyr)
+        else:
+            values, indices = np.unique(scale_factor[valid], return_inverse=True)
+            times = np.array([time_since_bigbang(1/a-1, h=h, Ode0=Ode0, Om0=Om0,
+                              Or0=Or0, Ok0=Ok0, tol=tol).to_value(u.Gyr) for a in values])
+            age[valid] = times[indices]
+    return age*u.Gyr
+
 # aliases 
 dC = comoving_distance
 dM = transverse_comoving_distance

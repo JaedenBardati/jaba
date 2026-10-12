@@ -1,6 +1,6 @@
 import numpy as np
 
-from ..analysis import radiation as rad
+from ..physics import radiation as rad
 from ..utils import units as u
 from ..utils import constants as c
 

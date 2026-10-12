@@ -9,8 +9,8 @@ from .utils import coordinates as coord
 from .utils import grid
 from .utils import visual as jv 
 from .utils import datastructures as jds
-from .analysis import dynamics as dyn
-from .analysis import cosmology as cosmo
+from .physics import dynamics as dyn
+from .physics import cosmology as cosmo
 
 ###
 ### Structure for Snapshot Class Construction:
@@ -418,9 +418,15 @@ class Basic_GIZMO_Snapshot(HDF5_Snapshot):
     omega_radiation = OmegaRadiation
     Omega_Radiation = OmegaRadiation
 
-    def scale_factor_to_time(self, scale_factor):  # move to cosmology module when added
-        #raise NotImplementedError('Need to add cosmological integration to program.')
-        return cosmo.scale_factor_to_time(scale_factor, h=self.HubbleParam, Ode0=self.OmegaLambda, Om0=self.OmegaMatter, Or0=self.OmegaRadiation, Ok0=0.0)
+    def scale_factor_to_time(self, scale_factor):
+        """Convert scale factors to cosmic ages using the snapshot's matter/Lambda cosmology.
+
+        Uses LambdaCDM with Tcmb0=0, matching the galaxy stellar-age calculation.
+        Nonpositive formation flags are retained as nonpositive values in Gyr;
+        nonfinite inputs return NaN. Scalar and array inputs are supported.
+        """
+        return cosmo.scale_factor_to_time(scale_factor, h=self.HubbleParam, Om0=self.OmegaMatter,
+                                          Ode0=self.OmegaLambda, Or0=0., Ok0=1-self.OmegaMatter-self.OmegaLambda)
 
     @property
     def UnitSystem_In_CGS(self):
@@ -627,7 +633,9 @@ class StandardDataset():
         return f"<Standard dataset '{self.name}' in snapshot '{self._snapshot.name}'>"
 
 
-    
+
+
+
 
 def _add_convenience_properties(cls):
     #assert isinstance(cls, Snapshot), "Convenience snapshot constructor must be a class that inherits from Snapshot." # TODO
@@ -1180,7 +1188,7 @@ def _add_convenience_properties(cls):
         pass # TODO
 
     # Basic lazy-loaded tree structure for position if needed
-    def tree(self, particle_type=0, dim=None, leafsize=16, fast_build=False): # fast build will cost more in query time, use only if you need to build the tree more than you query it
+    def tree(self, particle_type=0, dim=None, leafsize=16, fast_build=False, units=True): # fast build will cost more in query time, use only if you need to build the tree more than you query it
         """A lazy-loaded tree structure overlayed on the position arrays of a given particle type."""
         _name = '_tree_' + str(self._resolve_particle_type_number(particle_type)) + '_' + str(dim)
         if not hasattr(self, _name):
@@ -1230,17 +1238,20 @@ def _add_convenience_properties(cls):
                     return super().query_pairs(r_value, *args, **kwargs)
             
             if dim is None:
-                setattr(self, _name, 
-                        cKDTree_wUnits(getattr(self, 'pos' + str(self._resolve_particle_type_number(particle_type))), 
-                                    leafsize=leafsize, compact_nodes=(not fast_build), balanced_tree=(not fast_build), copy_data=False))
+                pos = getattr(self, 'pos' + str(self._resolve_particle_type_number(particle_type)))
             elif isinstance(dim, str) and dim in ['x', 'y', 'z']:
                 dim_idx = 'xyz'.index(dim)
             elif isinstance(dim, int) or isinstance(dim, np.integer):
-                setattr(self, _name, 
-                        cKDTree_wUnits(getattr(self, 'pos' + str(self._resolve_particle_type_number(particle_type)))[:, dim], 
-                                    leafsize=leafsize, compact_nodes=(not fast_build), balanced_tree=(not fast_build), copy_data=False))
+                pos = getattr(self, 'pos' + str(self._resolve_particle_type_number(particle_type)))[:, dim]
             else:
                 raise ValueError("dim must be None, an integer index, or one of 'x', 'y', or 'z'.")
+
+            if units is True:
+                setattr(self, _name, cKDTree_wUnits(pos, leafsize=leafsize, compact_nodes=(not fast_build), balanced_tree=(not fast_build), copy_data=False))
+            elif units is False:
+                setattr(self, _name, cKDTree(pos.value, leafsize=leafsize, compact_nodes=(not fast_build), balanced_tree=(not fast_build), copy_data=False))
+            else:
+                setattr(self, _name, cKDTree(pos.to(units).value, leafsize=leafsize, compact_nodes=(not fast_build), balanced_tree=(not fast_build), copy_data=False))
         return getattr(self, _name)
     setattr(cls, 'tree', tree)
 
