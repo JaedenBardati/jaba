@@ -43,6 +43,7 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
     Pass a snapshot and any galaxy_continuum options (npix, grid_shape, Lbox, inner_radius,
     workers, log, etc.). Defaults here use 128 linear wavelengths from 0.28 to 1.25 micron
     and omit optical-depth cubes. Explicit lam or wavelength_range overrides that range.
+    If npix is supplied without grid_shape, the grid uses npix cells along each axis.
     Alternatively pass continuum=the result of galaxy_continuum or raytrace_galaxy_continuum
     to recolor a cube without another calculation; do not also supply snapshot/RT options.
 
@@ -73,6 +74,7 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
     if continuum is None:
         if continuum_kwargs.get('lam') is None and continuum_kwargs.get('wavelength_range') is None:
             continuum_kwargs['wavelength_range'] = [0.28, 1.25]*u.micron
+        if 'npix' in continuum_kwargs: continuum_kwargs.setdefault('grid_shape', continuum_kwargs['npix'])
         continuum_kwargs.setdefault('n_wavelength', 128)
         continuum_kwargs.setdefault('wavelength_spacing', 'linear')
         continuum_kwargs.setdefault('return_optical_depth', False)

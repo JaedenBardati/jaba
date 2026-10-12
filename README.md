@@ -66,7 +66,8 @@ that coverage. Standard filters download through the resource cache on first use
 For an existing calculation, use `galaxy.galaxy_image(continuum=galaxy_rt)` to change
 filters or stretch without tracing again. The result contains the RGB array, physical
 band images, extent, figure, axes and image artist; it does not retain the spectral cube.
-Pass `ax=` to draw into an existing subplot.
+Pass `ax=` to draw into an existing subplot. When `npix` is supplied without
+`grid_shape`, the grid uses `npix` cells along each axis; an explicit `grid_shape` wins.
 
 ### Running Simulations
 
