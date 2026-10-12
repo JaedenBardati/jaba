@@ -94,7 +94,7 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
         if output is not None and ax is None: _, ax = plt.subplots()
         image = jv.imshow(rgb, ax=ax, origin='lower', extent=extent.value, aspect='equal',
                           xlabel='x [kpc]', ylabel='y [kpc]', title=title, show_colorbar=False,
-                          out=output, show=False, fixed_width=False, clf_after=False, close_after=output is not None)
+                          out=output, show=False, clf_after=False, close_after=output is not None)
     result.update(figure=image.figure, ax=image.axes, image=image)
     return result
 

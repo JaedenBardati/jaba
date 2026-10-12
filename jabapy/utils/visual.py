@@ -1,5 +1,6 @@
 import io, functools, warnings
 
+import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure as MatplotlibFigure
@@ -248,44 +249,56 @@ class style_context: # TODO: expand this to other settings also and make it more
 # standard functionality decorator
 
 def iterate_height_to_get_fixed_width(fig, max_iter=100, fig_aspect=1.0, fallback_aspect=1.0, _debug=False):
-    """Iteratively adjust the figure height to achieve a fixed width with tight bbox, but variable height/figure aspect ratio."""
+    """Resize the canvas proportionally to match its original width after tight cropping.
+
+    Both dimensions may change so height-limited, equal-aspect axes can grow too; font
+    sizes and axes aspect constraints are preserved. Width is matched within one output
+    pixel. Nonconvergence keeps the closest measured size and warns instead of failing.
+    fig_aspect/fallback_aspect are used only to reset an unsafe canvas-size proposal.
+    """
+
+    # measure at the export resolution and target the center of the desired pixel bin
+    if max_iter < 1: raise ValueError('max_iter must be positive.')
     dpi = matplotlib.rcParams['savefig.dpi']
-    fig.set_dpi(dpi) # make sure dpi is right
-    org_height_inches = float(fig.get_figheight())        # original height in inches (before bbox cut)
-    goal_width_inches = float(fig.get_figwidth())         # approximate width in inches (within pixel round-off error)
-    goal_width_pixels = int(round(goal_width_inches*dpi)) # target exact width in pixels
+    dpi = fig.get_dpi() if dpi == 'figure' else float(dpi)
+    fig.set_dpi(dpi)
+    original_size = fig.get_size_inches().copy()
+    goal_width_pixels = max(1, int(round(original_size[0]*dpi)))
+    target_width = goal_width_pixels+0.5
+    best_size, best_width, best_error = original_size.copy(), np.nan, np.inf
+    stalled = 0
 
-    real_width_pixels = 0  # real width in pixels after tight bbox cut (will be updated in loop)
-    i = max_iter           # max iterations to adjust figure size
-    while goal_width_pixels != real_width_pixels:
-        ## get the real width in pixels using the tight bbox
-        fig.canvas.draw()    # expensive step!
+    # resize both dimensions without changing font sizes or the aspect of the plotted data
+    for iteration in range(max_iter):
+        fig.canvas.draw()
         tight_bbox = fig.get_tightbbox(fig.canvas.get_renderer())
-        real_width_pixels = int(round((tight_bbox.width + 2 * matplotlib.rcParams['savefig.pad_inches']) * dpi))
-        
-        ## adjust mpl figure size to get the desired width in pixels
-        full_width_inches = fig.get_figwidth() # before bbox cut
-        adjustment_factor = goal_width_pixels / real_width_pixels
-        adjustment_factor2 = goal_width_inches / full_width_inches
-        if _debug:
-            print('want {} pix ({:.3f} in) - have {} pix ({:.3f} in) -> adjust by factor {} (~ {})'.format(goal_width_pixels, goal_width_inches, real_width_pixels, fig.get_figwidth(), adjustment_factor2, adjustment_factor))
-            print(' > fig height: {:.3f} in'.format(fig.get_figheight())) 
-        if adjustment_factor != 1.0:
-            fig.set_figwidth(fig.get_figwidth()*adjustment_factor)                     
-        
-        ## check if the adjustment is too large
-        check_ratio = full_width_inches/goal_width_inches
-        if check_ratio > 100 or check_ratio < 0.01:
-            warnings.warn('[PLOT ERROR] Large discrepancy in figure width ({} pixels vs {} pixels), stopping adjustment and defaulting to original size{}.'.format(goal_width_pixels, real_width_pixels, " (with attempted adjustment to figure aspect)" if fig_aspect != 'auto' else "")) # this can sometimes to occur if the figure height is not large enough, check that first
-            aspect = 1.0 if fig_aspect == 'equal' else fig_aspect  # default to aspect ratio of 1 if none defined
-            fig.set_size_inches((goal_width_inches, goal_width_inches/aspect if fig_aspect != 'auto' else org_height_inches)) # reset to original size
-            fig.canvas.draw()
-            break
+        real_width_pixels = (tight_bbox.width+2*matplotlib.rcParams['savefig.pad_inches'])*dpi
+        if not np.isfinite(real_width_pixels) or real_width_pixels <= 0:
+            warnings.warn('Invalid tight bounding-box width; keeping the closest measured figure size.')
+            fig.set_size_inches(best_size)
+            return
+        error = abs(real_width_pixels-target_width)
+        improved = error < best_error-0.01
+        stalled = 0 if improved else stalled+1
+        if error < best_error:
+            best_size, best_width, best_error = fig.get_size_inches().copy(), real_width_pixels, error
+        if _debug: print('iteration {}: cropped width {:.3f} pixels, target {} pixels'.format(iteration+1, real_width_pixels, goal_width_pixels))
+        if error <= 0.25: return
+        if stalled >= 2 or iteration+1 == max_iter: break
+        next_size = fig.get_size_inches()*np.clip(target_width/real_width_pixels, 0.5, 2.0)
 
-        i-=1
-        if i <= 0:
-            warnings.warn('Failed to achieve fixed width after {} iterations, saving with current width ({} pixels, but should be {} pixels).'.format(custom_settings['fixed_width_max_iter'], goal_width_pixels, real_width_pixels))
-            break
+        # bound pathological resizing and retain the original fallback aspect controls
+        if np.any(next_size/original_size > 100) or np.any(next_size/original_size < 0.01):
+            aspect = fallback_aspect if fig_aspect is None else fig_aspect
+            height = original_size[1] if aspect == 'auto' else original_size[0]/(1.0 if aspect == 'equal' else aspect)
+            warnings.warn('Large discrepancy in figure width; resetting the canvas to its original width.')
+            fig.set_size_inches(original_size[0], height)
+            return
+        fig.set_size_inches(next_size)
+
+    # preserve the best result when the layout cannot reach the requested width
+    fig.set_size_inches(best_size)
+    warnings.warn('Failed to achieve fixed width after {} iterations, saving with closest width ({:.3f} pixels, target {} pixels).'.format(iteration+1, best_width, goal_width_pixels))
 
 
 def basic_figure_wrapper(**wrapper_settings):

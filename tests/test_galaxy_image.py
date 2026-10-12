@@ -8,6 +8,7 @@ import numpy as np
 
 from jabapy.apps import galaxy
 from jabapy.utils import units as u
+from jabapy.utils import visual as jv
 
 
 class TestGalaxyImage(unittest.TestCase):
@@ -66,7 +67,6 @@ class TestGalaxyImage(unittest.TestCase):
         fig, ax = plt.subplots()
         ax.plot([0., 1.], [1., 0.])
         figures = plt.get_fignums()
-        from jabapy.utils import visual as jv
         with patch.object(jv, 'imshow', side_effect=AssertionError('Unexpected plot')):
             result = galaxy.galaxy_image(datacube=self.datacube, plot=False, ax=ax)
         self.assertEqual(plt.get_fignums(), figures)
@@ -88,6 +88,9 @@ class TestGalaxyImage(unittest.TestCase):
                 self.assertEqual(path.read_bytes()[:8], b'\x89PNG\r\n\x1a\n')
                 pixels = plt.imread(path)
                 self.assertEqual(pixels.ndim, 3); self.assertGreater(pixels.shape[0], 0)
+                style = jv.DEFAULT_CUSTOM_SUBPLOT_SETTINGS
+                width = jv.construct_paper_figsize(style['fig_style'], subtype=style['fig_substyle'], aspect=style['fig_aspect'])[0]
+                self.assertEqual(pixels.shape[1], round(width*40))
                 self.assertEqual(plt.get_fignums(), figures)
                 self.assertIsNot(result['ax'], ax)
                 np.testing.assert_array_equal(result['image'].get_array(), result['rgb'])
