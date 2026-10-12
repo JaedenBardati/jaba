@@ -66,6 +66,10 @@ that coverage. Standard filters download through the resource cache on first use
 For an existing calculation, use `galaxy.galaxy_image(datacube=galaxy_rt)` to change
 filters or stretch without tracing again. The result contains the RGB array, physical
 band images, extent, figure, axes and image artist; it does not retain the spectral cube.
+Use `plot=False` to return the RGB and band images without creating a figure (the
+`figure`, `ax`, and `image` entries are then `None`). Use `plot='galaxy_rgb.png'`
+to save without showing; the saved figure is closed, including a supplied `ax`'s figure.
+`plot=True` is the default and keeps the figure open for notebook display.
 Pass `ax=` to draw into an existing subplot. When `npix` is supplied without
 `grid_shape`, the grid uses `npix` cells along each axis; an explicit `grid_shape` wins.
 The default `inner_radius` is 5% of a pixel width (`0.05 * Lbox / npix`);

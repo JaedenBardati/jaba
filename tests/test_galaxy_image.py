@@ -1,4 +1,6 @@
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import matplotlib.pyplot as plt
@@ -59,6 +61,49 @@ class TestGalaxyImage(unittest.TestCase):
         with self.assertRaises(ValueError): galaxy.galaxy_image()
         with self.assertRaises(ValueError): galaxy.galaxy_image(object(), datacube=self.datacube)
         with self.assertRaises(ValueError): galaxy.galaxy_image(datacube=self.datacube, npix=8)
+
+    def test_no_plot_preserves_image_data_and_existing_axes(self):
+        fig, ax = plt.subplots()
+        ax.plot([0., 1.], [1., 0.])
+        figures = plt.get_fignums()
+        from jabapy.utils import visual as jv
+        with patch.object(jv, 'imshow', side_effect=AssertionError('Unexpected plot')):
+            result = galaxy.galaxy_image(datacube=self.datacube, plot=False, ax=ax)
+        self.assertEqual(plt.get_fignums(), figures)
+        self.assertEqual(len(ax.lines), 1); self.assertEqual(len(ax.images), 0)
+        for key in ('figure', 'ax', 'image'): self.assertIsNone(result[key])
+        plotted = galaxy.galaxy_image(datacube=self.datacube, ax=ax)
+        np.testing.assert_array_equal(result['rgb'], plotted['rgb'])
+        np.testing.assert_array_equal(result['channels'], plotted['channels'])
+
+    def test_save_without_display_or_modifying_other_figures(self):
+        fig, ax = plt.subplots()
+        ax.plot([0., 1.], [1., 0.])
+        figures = plt.get_fignums()
+        with tempfile.TemporaryDirectory() as directory, plt.rc_context({'savefig.dpi': 40, 'text.usetex': False}):
+            for use_path in (False, True):
+                path = Path(directory)/f'galaxy_{use_path}.png'
+                with patch.object(plt, 'show', side_effect=AssertionError('Unexpected display')):
+                    result = galaxy.galaxy_image(datacube=self.datacube, plot=path if use_path else str(path))
+                self.assertEqual(path.read_bytes()[:8], b'\x89PNG\r\n\x1a\n')
+                pixels = plt.imread(path)
+                self.assertEqual(pixels.ndim, 3); self.assertGreater(pixels.shape[0], 0)
+                self.assertEqual(plt.get_fignums(), figures)
+                self.assertIsNot(result['ax'], ax)
+                np.testing.assert_array_equal(result['image'].get_array(), result['rgb'])
+        self.assertEqual(len(ax.lines), 1); self.assertEqual(len(ax.images), 0)
+
+    def test_save_supplied_axes_and_validate_plot(self):
+        fig, ax = plt.subplots()
+        with tempfile.TemporaryDirectory() as directory, plt.rc_context({'savefig.dpi': 40, 'text.usetex': False}):
+            path = Path(directory)/'supplied.png'
+            result = galaxy.galaxy_image(datacube=self.datacube, plot=path, ax=ax)
+            self.assertTrue(path.is_file())
+        self.assertIs(result['ax'], ax)
+        self.assertFalse(plt.fignum_exists(fig.number))
+        with patch.object(galaxy, 'galaxy_datacube') as trace:
+            with self.assertRaises(TypeError): galaxy.galaxy_image(object(), plot=1)
+            trace.assert_not_called()
 
     def test_one_call_defaults_and_explicit_spectral_grid(self):
         snap = object()

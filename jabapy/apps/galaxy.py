@@ -15,7 +15,7 @@ from ..utils.grid import CartesianGrid, bin_particles_direct
 
 def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effective',
                  percentile=99.5, stretch=0.03, ax=None, title=None, datacube=None,
-                 cache=True, **datacube_kwargs):
+                 cache=True, plot=True, **datacube_kwargs):
     """Render a galaxy RGB image in one call, using the notebook's shared asinh stretch.
 
     Pass a snapshot and any galaxy_datacube options (npix, grid_shape, Lbox, inner_radius,
@@ -36,11 +36,15 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
 
     Returns rgb (y, x, 3), unstretched band-averaged channels with I_lambda units per micron,
     extent in kpc, bands, component, scale, figure, ax and the Matplotlib image artist.
-    An optional ax receives the plot; the figure is kept open for notebook display/saving.
+    plot=True keeps the figure open for notebook display/saving, optionally on ax.
+    plot=False returns image data without plotting; figure, ax and image are None.
+    A filename or Path saves the plot without displaying it and closes the saved figure
+    (including a supplied ax's figure); the returned figure object remains usable.
     Full spectral cubes are not retained in the result. No snapshot data are modified.
     """
 
     # validate display settings before preparing or tracing the galaxy
+    if not isinstance(plot, (bool, str, Path)): raise TypeError('plot must be True, False, or a filename/Path.')
     if isinstance(bands, str) or len(bands) != 3: raise ValueError('Choose three filter names in display red, green, blue order.')
     if component not in ('pure_emission', 'absorption', 'effective'): raise ValueError('Unknown datacube component.')
     if not np.isfinite(percentile) or not 0 < percentile <= 100: raise ValueError('percentile must lie in (0, 100].')
@@ -75,15 +79,24 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
         np.divide(channels*stretched[..., None], brightness[..., None], out=rgb, where=positive[..., None])
         np.clip(rgb, 0, 1, out=rgb)
 
-    # plot through the shared visual helper and keep the figure available to the caller
-    from ..utils import visual as jv
+    # return physical band images and display data without creating a figure when disabled
     extent = datacube['extent'].to(u.kpc)
+    result = dict(rgb=rgb, channels=channels*unit, extent=extent, bands=tuple(bands), component=component,
+                  scale=scale*unit, figure=None, ax=None, image=None)
+    if plot is False: return result
+
+    # reuse the visual helper's saving options and suppress interactive display during export
+    from ..utils import visual as jv
+    import matplotlib.pyplot as plt
+    output = Path(plot) if isinstance(plot, (str, Path)) else None
     if title is None: title = 'Approximate visible RGB' if tuple(bands) == ('RGB.R', 'RGB.G', 'RGB.B') else ' / '.join(bands)+' (false color)'
-    image = jv.imshow(rgb, ax=ax, origin='lower', extent=extent.value, aspect='equal',
-                      xlabel='x [kpc]', ylabel='y [kpc]', title=title, show_colorbar=False,
-                      show=False, clf_after=False, close_after=False)
-    return dict(rgb=rgb, channels=channels*unit, extent=extent, bands=tuple(bands), component=component,
-                scale=scale*unit, figure=image.figure, ax=image.axes, image=image)
+    with plt.ioff():
+        if output is not None and ax is None: _, ax = plt.subplots()
+        image = jv.imshow(rgb, ax=ax, origin='lower', extent=extent.value, aspect='equal',
+                          xlabel='x [kpc]', ylabel='y [kpc]', title=title, show_colorbar=False,
+                          out=output, show=False, fixed_width=False, clf_after=False, close_after=output is not None)
+    result.update(figure=image.figure, ax=image.axes, image=image)
+    return result
 
 
 def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix=64, grid_shape=64,
