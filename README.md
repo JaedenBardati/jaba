@@ -85,6 +85,13 @@ image = galaxy.galaxy_image(snap, Lbox=10, grid_shape=128, npix=512, workers=-1,
 image['figure'].savefig('galaxy_rgb.png')
 ```
 
+Galaxy images and datacubes default to `supersampling=2`: four uniformly spaced rays
+per output pixel, averaged in linear intensity before the RGB stretch. Use
+`supersampling=1` for the original single-ray sampling. `npix` remains the final image
+size and `grid_shape` is unchanged. Ray work grows approximately as the factor squared;
+offsets are accumulated one at a time rather than retaining an enlarged spectral cube.
+Optional optical-depth cubes contain mean ray depths, not effective attenuation depths.
+
 `Lbox` is in kpc when supplied without units. This uses the approximate visible RGB
 filters and the notebook's shared asinh stretch; it is not a calibrated true-color image.
 Choose `bands=('SDSS.i', 'SDSS.r', 'SDSS.g')` or Johnson I/V/B for false color.

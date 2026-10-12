@@ -80,6 +80,50 @@ class TestGalaxyDatacube(unittest.TestCase):
             for field in ('datacubes', 'optical_depth'):
                 np.testing.assert_allclose(actual[field][name], expected[field][name])
 
+    def test_supersampling_matches_fine_pixel_intensity_average(self):
+
+        # compare subpixel tracing with independently rendered fine pixels on both backends
+        preparation = {key: value for key, value in self.kw.items() if key not in ('npix', 'N_NGB', 'workers')}
+        for backend, storage, factor in (('numpy', 'dense', 2), ('numba', 'compact', 3)):
+            with self.subTest(backend=backend, storage=storage, factor=factor):
+                prepared = galaxy.prepare_galaxy_datacube(self.snap, storage=storage, **preparation)
+                coarse = galaxy.raytrace_galaxy_datacube(prepared, npix=2, supersampling=factor, backend=backend, workers=1)
+                fine = galaxy.raytrace_galaxy_datacube(prepared, npix=2*factor, supersampling=1, backend=backend, workers=1)
+                for field in ('datacubes', 'optical_depth'):
+                    for name in coarse[field]:
+                        expected = fine[field][name].reshape(2, factor, 2, factor, 3).mean(axis=(1, 3))
+                        np.testing.assert_allclose(coarse[field][name], expected, rtol=1e-10, atol=0)
+                self.assertEqual(coarse['supersampling'], factor)
+                np.testing.assert_allclose(coarse['pixel_area'], factor**2*fine['pixel_area'])
+                np.testing.assert_array_equal(coarse['extent'], fine['extent'])
+                no_tau = galaxy.raytrace_galaxy_datacube(prepared, npix=2, supersampling=factor,
+                    backend=backend, workers=1, return_optical_depth=False)
+                self.assertNotIn('optical_depth', no_tau)
+                for name in coarse['datacubes']:
+                    np.testing.assert_allclose(no_tau['datacubes'][name], coarse['datacubes'][name])
+
+    def test_supersampling_defaults_validation_and_single_ray(self):
+
+        # preserve pixel-center behavior when disabled and reject invalid factors before loading
+        preparation = {key: value for key, value in self.kw.items() if key not in ('npix', 'N_NGB', 'workers')}
+        prepared = galaxy.prepare_galaxy_datacube(self.snap, **preparation)
+        with patch.object(galaxy.rad, 'raytrace_particles', wraps=galaxy.rad.raytrace_particles) as trace:
+            single = galaxy.raytrace_galaxy_datacube(prepared, npix=2, supersampling=1, workers=1)
+            self.assertEqual(trace.call_count, 1)
+            starts = trace.call_args.args[0]
+            np.testing.assert_allclose(starts[..., 0], np.array([[-.25, .25], [-.25, .25]])*u.kpc.to(u.cm))
+            np.testing.assert_allclose(starts[..., 1], np.array([[-.25, -.25], [.25, .25]])*u.kpc.to(u.cm))
+            trace.reset_mock()
+            default = galaxy.raytrace_galaxy_datacube(prepared, npix=2, workers=1)
+            self.assertEqual(trace.call_count, 4)
+        self.assertEqual(default['supersampling'], 2)
+        self.assertEqual(single['supersampling'], 1)
+        for factor in (0, -1, 1.5, True, None):
+            with self.subTest(factor=factor), patch.object(galaxy, 'prepare_galaxy_datacube') as prepare:
+                with self.assertRaises(ValueError): galaxy.galaxy_datacube(self.snap, supersampling=factor)
+                prepare.assert_not_called()
+                with self.assertRaises(ValueError): galaxy.raytrace_galaxy_datacube(prepared, supersampling=factor)
+
     def test_deposition_conservation_boundaries_and_exclusions(self):
         positions = np.array([[-.5, -.5, -.5], [-.1, 0, 0], [-.1, 0, 0], [.5, 0, 0], [-.5001, 0, 0], [.2, 0, 0]])
         path = self.snap.filepath.with_name('boundaries.hdf5')

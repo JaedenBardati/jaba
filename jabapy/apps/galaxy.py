@@ -22,6 +22,8 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
     workers, log, etc.). Defaults here use 128 linear wavelengths from 0.28 to 1.25 micron
     and omit optical-depth cubes. Explicit lam or wavelength_range overrides that range.
     If npix is supplied without grid_shape, the grid uses npix cells along each axis.
+    supersampling=2 averages a 2 by 2 ray pattern per pixel before the RGB stretch;
+    use supersampling=1 for the original single-ray sampling. Output size remains npix.
     inner_radius defaults to 0.05*Lbox/npix (5% of a pixel width); pass zero to disable it.
     Alternatively pass datacube=the result of galaxy_datacube or raytrace_galaxy_datacube
     to recolor a cube without another calculation; do not also supply snapshot/RT options.
@@ -105,7 +107,7 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
                      chunk_size=250000, frequency_chunk_size=4, step_fraction=0.25, N_NGB=8,
                      workers=-1, query_chunk_size=4096, log=False, cache=True,
                      wavelength_range=None, n_wavelength=24, wavelength_spacing='log',
-                     storage='auto', storage_dir=None, max_grid_bytes=4*1024**3, inner_radius=0*u.kpc, backend='auto', return_optical_depth=True):
+                     storage='auto', storage_dir=None, max_grid_bytes=4*1024**3, inner_radius=0*u.kpc, backend='auto', return_optical_depth=True, supersampling=2):
     """Trace intrinsic stellar populations and thermal MRN dust through a GIZMO galaxy toward +z.
 
     Lbox is the full physical image width; depth defaults to Lbox. center is relative to
@@ -143,9 +145,15 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
     raytrace_galaxy_datacube to change npix or integration settings without rereading data.
     backend='auto' uses parallel compiled transfer; 'numpy' selects the reference tracer.
     return_optical_depth=False omits optical-depth cubes to reduce output memory.
+    supersampling is a positive integer (default 2), tracing its square in uniformly
+    spaced subpixel rays and averaging linear intensities. npix and pixel_area describe
+    the final pixels. Returned optical depths are mean ray depths for diagnostics,
+    not effective depths computed from mean transmission. Use 1 for single-ray sampling.
     """
 
     if int(npix) != npix or npix < 1: raise ValueError('npix must be a positive integer.')
+    if isinstance(supersampling, bool) or not isinstance(supersampling, (int, np.integer)) or supersampling < 1:
+        raise ValueError('supersampling must be a positive integer.')
     prepared = prepare_galaxy_datacube(snap, lam=lam, Lbox=Lbox, depth=depth, center=center, grid_shape=grid_shape,
         model=model, star_type=star_type, dust_to_metal=dust_to_metal, dust_temperature=dust_temperature,
         dust_sublimation_temperature=dust_sublimation_temperature, stellar_mass_is_initial=stellar_mass_is_initial,
@@ -154,7 +162,8 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
         frequency_chunk_size=frequency_chunk_size, storage=storage, storage_dir=storage_dir, max_grid_bytes=max_grid_bytes,
         inner_radius=inner_radius)
     return raytrace_galaxy_datacube(prepared, npix=npix, frequency_chunk_size=frequency_chunk_size,
-        step_fraction=step_fraction, N_NGB=N_NGB, workers=workers, query_chunk_size=query_chunk_size, log=log, backend=backend, return_optical_depth=return_optical_depth)
+        step_fraction=step_fraction, N_NGB=N_NGB, workers=workers, query_chunk_size=query_chunk_size, log=log,
+        backend=backend, return_optical_depth=return_optical_depth, supersampling=supersampling)
 
 
 def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, grid_shape=64,
@@ -382,7 +391,7 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
 
 
 def raytrace_galaxy_datacube(prepared, npix=64, frequency_chunk_size=4, step_fraction=0.25,
-                             N_NGB=8, workers=-1, query_chunk_size=4096, log=False, backend='auto', return_optical_depth=True):
+                             N_NGB=8, workers=-1, query_chunk_size=4096, log=False, backend='auto', return_optical_depth=True, supersampling=2):
     """Render a prepared galaxy without reading its snapshot or rebuilding its spectra.
 
     prepared is the dictionary returned by prepare_galaxy_datacube. npix and integration
@@ -395,8 +404,15 @@ def raytrace_galaxy_datacube(prepared, npix=64, frequency_chunk_size=4, step_fra
     the original reference tracer; frequency_chunk_size only affects that backend.
     return_optical_depth=False omits optical_depth from the result and, with the compiled
     backend, avoids allocating those cubes. Wavelength-unit conversion is done in place.
+    supersampling=2 averages four uniformly spaced rays per final pixel in linear
+    intensity; 1 reproduces pixel-center sampling. Subpixel offsets are traced one at
+    a time, retaining the accumulated output and one sample cube, not a full enlarged
+    cube. Optical depths are averaged separately as diagnostics, not used to attenuate
+    the averaged intensity. Runtime scales approximately with supersampling squared.
     """
     if int(npix) != npix or npix < 1: raise ValueError('npix must be a positive integer.')
+    if isinstance(supersampling, bool) or not isinstance(supersampling, (int, np.integer)) or supersampling < 1:
+        raise ValueError('supersampling must be a positive integer.')
     npix = int(npix)
     lam, dims, Lbox = prepared['wavelength'], prepared['grid_shape'], prepared['Lbox']
     lower, upper, center, cell_width = (prepared[key] for key in ('lower', 'upper', 'center', 'cell_width'))
@@ -412,18 +428,37 @@ def raytrace_galaxy_datacube(prepared, npix=64, frequency_chunk_size=4, step_fra
     x1 = x0.copy(); x1[..., 2] = upper[2]
     k_abs, k_sca = prepared['k_abs'], prepared['k_sca']
     factors = np.stack((np.zeros_like(k_abs), k_abs, np.sqrt(k_abs*(k_abs+k_sca))), axis=-1)
-    traced = rad.raytrace_particles(x0, x1, prepared['emission'], prepared['dust_density'],
-        tree=grid, opacity_factors=factors, frequency_chunk_size=frequency_chunk_size, N_NGB=N_NGB,
-        step_fraction=step_fraction, query_chunk_size=query_chunk_size, workers=workers, ret_tau=return_optical_depth,
-        log=log, reverse=True, field_indices=prepared.get('field_indices'), backend=backend)
-    intensity = traced[0] if return_optical_depth else traced
+
+    # accumulate linear subpixel intensities without constructing an enlarged spectral cube
+    offsets = ((np.arange(supersampling)+0.5)/supersampling-0.5)*(Lbox/npix)
+    intensity = None; optical_depth = None
+    for iy, dy in enumerate(offsets):
+        for ix, dx in enumerate(offsets):
+            x0[..., 0] = xx+dx; x0[..., 1] = yy+dy
+            x1[..., :2] = x0[..., :2]
+            if log: print(f'Galaxy subpixel rays: {iy*supersampling+ix+1}/{supersampling**2}', flush=True)
+            traced = rad.raytrace_particles(x0, x1, prepared['emission'], prepared['dust_density'],
+                tree=grid, opacity_factors=factors, frequency_chunk_size=frequency_chunk_size, N_NGB=N_NGB,
+                step_fraction=step_fraction, query_chunk_size=query_chunk_size, workers=workers, ret_tau=return_optical_depth,
+                log=log, reverse=True, field_indices=prepared.get('field_indices'), backend=backend)
+            if intensity is None:
+                intensity = traced[0] if return_optical_depth else traced
+                if return_optical_depth: optical_depth = traced[1]
+            else:
+                intensity += traced[0] if return_optical_depth else traced
+                if return_optical_depth: optical_depth += traced[1]
+            del traced
+    intensity /= supersampling**2
+    if return_optical_depth: optical_depth /= supersampling**2
+
+    # retain final pixel geometry and convert the averaged spectrum to the requested units
     output_unit = u.erg/u.s/u.cm**2/u.sr/lam.unit
     intensity *= (u.erg/u.s/u.cm**2/u.sr/u.AA).to(output_unit)
     intensity = u.Quantity(intensity, output_unit, copy=False)
     pixel_area = (Lbox/npix)**2
     names = ('pure_emission', 'absorption', 'effective')
     result = dict(wavelength=lam, extent=np.array([-Lbox/2,Lbox/2,-Lbox/2,Lbox/2])*u.cm,
-                pixel_area=pixel_area*u.cm**2, particle_counts=counts, grid_shape=tuple(dims),
+                pixel_area=pixel_area*u.cm**2, particle_counts=counts, grid_shape=tuple(dims), supersampling=int(supersampling),
                 datacubes={name: intensity[..., i] for i, name in enumerate(names)})
-    if return_optical_depth: result['optical_depth'] = {name: traced[1][..., i] for i, name in enumerate(names)}
+    if return_optical_depth: result['optical_depth'] = {name: optical_depth[..., i] for i, name in enumerate(names)}
     return result
