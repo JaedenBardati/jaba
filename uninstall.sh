@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 
+JABA_ADDED_STRING=">>> Added by Jaba >>>"
+JABA_ADDED_ENDSTRING="<<< Added by Jaba <<<"
+JABA_VARIABLES_STRING="# ${JABA_ADDED_STRING}"
+JABA_VARIABLES_ENDSTRING="# ${JABA_ADDED_ENDSTRING}"
+
 ############
 # Setup jaba
 source "$HOME/.bashrc"
@@ -80,7 +85,7 @@ if [[ "$confirm_uninstall" != "y" ]]; then
 fi
 
 ### remove jaba shell block from bashrc
-if remove_block_between_markers "$HOME/.bashrc" "$JABA_MARKER_START" "$JABA_MARKER_END"; then
+if remove_block_between_markers "$HOME/.bashrc" "$JABA_VARIABLES_STRING" "$JABA_VARIABLES_ENDSTRING"; then
 	printf "Removed jaba shell block from %s (if present).\n" "$HOME/.bashrc"
 else
 	printf "Failed to update %s.\n" "$HOME/.bashrc"

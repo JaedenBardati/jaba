@@ -138,7 +138,7 @@ class HDF5_Snapshot:
 
     def _resolve_particle_type_name(self, key, noerror=False):
         # get particle type name version
-        if isinstance(key, int) or isinstance(key, np.integer) and key < len(self._SUPPORTED_PARTICLES_TYPES): # TODO: check if in self.particle_types in this function?
+        if (isinstance(key, int) or isinstance(key, np.integer)) and 0 <= key < len(self._SUPPORTED_PARTICLES_TYPES): # TODO: check if in self.particle_types in this function?
             return self._SUPPORTED_PARTICLES_TYPES[key]
         elif isinstance(key, str) and key in self._SUPPORTED_PARTICLES_TYPES:
             return key
@@ -147,7 +147,7 @@ class HDF5_Snapshot:
 
     def _resolve_particle_type_number(self, key, noerror=False):
         # get particle type number version
-        if isinstance(key, int) or isinstance(key, np.integer) and (0 <= key and key < len(self._SUPPORTED_PARTICLES_TYPES)):
+        if (isinstance(key, int) or isinstance(key, np.integer)) and 0 <= key < len(self._SUPPORTED_PARTICLES_TYPES):
             return key
         elif isinstance(key, str) and key in self._SUPPORTED_PARTICLES_TYPES:
             return int(str(key)[-1]) #specfic O(1) solution to GIZMO/GADGET only, but in general can be: self._SUPPORTED_PARTICLES_TYPES.index(key), though this is O(n) so TODO should switch to bimap between str and int types
@@ -1382,6 +1382,5 @@ def load(filepath, verbose=False):
     if verbose:
         print(f"Loading GIZMO snapshot from file {filepath} ...")
     return load_gizmo(filepath, debugging=verbose)
-
 
 
