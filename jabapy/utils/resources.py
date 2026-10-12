@@ -13,6 +13,7 @@ import shutil
 from pathlib import Path
 
 import numpy as np
+import scipy as sp
 
 # --- resource loaders ---
 def _load_BC03_spectra(directory):
@@ -65,6 +66,26 @@ def _load_BC03_spectra(directory):
     if np.any(np.diff(metallicities) <= 0) or np.any(np.diff(ages) <= 0) or np.any(np.diff(wavelengths) <= 0):
         raise ValueError('BC03 grids must be strictly increasing.')
     return metallicities, ages, wavelengths, np.stack([table[3] for table in tables])
+
+def _BC03_current_mass_fraction(model, metals, ages):
+    """Read living-star plus remnant fractions from the SSP .4color tables."""
+
+    # convert the companion mass tables onto the spectral age grid
+    directory = get_resource_path('stellar_population_models', model, '')
+    paths = sorted(directory.rglob('*.4color.gz')) or sorted(directory.rglob('*.4color'))
+    fractions = []
+    for path in paths:
+        with (gzip.open(path, 'rt') if path.suffix == '.gz' else path.open()) as stream:
+            text = stream.read()
+        metal = float(re.search(r'\bZ\s*=\s*([0-9.Ee+-]+)', text).group(1))
+        data = np.loadtxt(text.splitlines())
+        fraction = np.interp(ages, 10**data[:, 0], data[:, 10], left=1.0)
+        fractions.append((metal, fraction))
+    fractions.sort(key=lambda row: row[0])
+    if len(fractions) != len(metals) or not np.allclose([row[0] for row in fractions], metals):
+        raise ValueError('BC03 .4color mass tables must match the spectral metallicity grid.')
+    return sp.interpolate.RegularGridInterpolator((metals, ages), np.stack([row[1] for row in fractions]))
+
 
 def _load_bandpass(directory):
     """Read an SVO filter-profile VOTable, preserving response and detector metadata."""

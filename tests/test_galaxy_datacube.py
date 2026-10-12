@@ -10,6 +10,7 @@ import numpy as np
 from jabapy.apps import galaxy
 from jabapy.snapshot import GIZMO_Snapshot
 from astropy.cosmology import LambdaCDM
+from jabapy.utils import resources
 from jabapy.utils import units as u
 
 
@@ -35,8 +36,8 @@ class TestGalaxyDatacube(unittest.TestCase):
                 else: group['StellarFormationTime'] = [8e8, 9e8]
         self.snap = GIZMO_Snapshot(path)
         table = (np.array([.01, .03]), np.array([0., 1e9]), np.array([900., 1e5, 1.1e7]), np.full((2, 2, 3), 2.))
-        source = patch.object(galaxy, 'load_resource', return_value=table); source.start(); self.addCleanup(source.stop)
-        fraction = patch.object(galaxy, '_BC03_current_mass_fraction', return_value=lambda pts: np.full(pts.shape[0], .5))
+        source = patch.object(resources, 'load_resource', return_value=table); source.start(); self.addCleanup(source.stop)
+        fraction = patch.object(resources, '_BC03_current_mass_fraction', return_value=lambda pts: np.full(pts.shape[0], .5))
         fraction.start(); self.addCleanup(fraction.stop)
         self.kw = dict(lam=[.1, 10, 1000]*u.micron, Lbox=1*u.kpc, grid_shape=4, npix=2, N_NGB=8, workers=1)
 
@@ -69,7 +70,7 @@ class TestGalaxyDatacube(unittest.TestCase):
         emission, density = prepared['emission'].copy(), prepared['dust_density'].copy()
         expected = galaxy.galaxy_datacube(self.snap, **self.kw)
         with patch.object(h5py, 'File', side_effect=AssertionError('Snapshot read during rendering')), \
-             patch.object(galaxy, 'load_resource', side_effect=AssertionError('Resource read during rendering')):
+             patch.object(resources, 'load_resource', side_effect=AssertionError('Resource read during rendering')):
             actual = galaxy.raytrace_galaxy_datacube(prepared, npix=2, workers=1)
             higher = galaxy.raytrace_galaxy_datacube(prepared, npix=3, step_fraction=.15, workers=1)
         np.testing.assert_array_equal(prepared['emission'], emission)
@@ -149,7 +150,7 @@ class TestGalaxyDatacube(unittest.TestCase):
         self.assertEqual(prepared['storage'], 'compact')
         self.assertLessEqual(prepared['emission'].nbytes+prepared['dust_density'].nbytes+prepared['field_indices'].nbytes, 400)
         with patch.object(h5py, 'File', side_effect=AssertionError('Snapshot opened before budget check')), \
-             patch.object(galaxy, 'load_resource', side_effect=AssertionError('Resources loaded before budget check')):
+             patch.object(resources, 'load_resource', side_effect=AssertionError('Resources loaded before budget check')):
             with self.assertRaisesRegex(MemoryError, 'exceeding'):
                 galaxy.prepare_galaxy_datacube(self.snap, storage='dense', max_grid_bytes=400, **kw)
             with self.assertRaisesRegex(MemoryError, 'occupancy'):

@@ -1,5 +1,3 @@
-import gzip
-import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -11,28 +9,8 @@ import scipy as sp
 from ..physics import radiation as rad
 from ..utils import units as u
 from ..utils import constants as c
-from ..utils.resources import get_resource_path, load_resource
+from ..utils import resources
 from ..utils.grid import CartesianGrid, bin_particles_direct
-
-
-def _BC03_current_mass_fraction(model, metals, ages):
-    """Read living-star plus remnant fractions from the SSP .4color tables."""
-
-    # convert the companion mass tables onto the spectral age grid
-    directory = get_resource_path('stellar_population_models', model, '')
-    paths = sorted(directory.rglob('*.4color.gz')) or sorted(directory.rglob('*.4color'))
-    fractions = []
-    for path in paths:
-        with (gzip.open(path, 'rt') if path.suffix == '.gz' else path.open()) as stream:
-            text = stream.read()
-        metal = float(re.search(r'\bZ\s*=\s*([0-9.Ee+-]+)', text).group(1))
-        data = np.loadtxt(text.splitlines())
-        fraction = np.interp(ages, 10**data[:, 0], data[:, 10], left=1.0)
-        fractions.append((metal, fraction))
-    fractions.sort(key=lambda row: row[0])
-    if len(fractions) != len(metals) or not np.allclose([row[0] for row in fractions], metals):
-        raise ValueError('BC03 .4color mass tables must match the spectral metallicity grid.')
-    return sp.interpolate.RegularGridInterpolator((metals, ages), np.stack([row[1] for row in fractions]))
 
 
 def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effective',
@@ -296,14 +274,14 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
                   f'index map: {index_bytes/1024**3:.2f} GiB.', flush=True)
 
     # prepare compact stellar spectra and the current-to-initial mass conversion
-    metals, ages, native_lam, spectra = load_resource('stellar_population_models', model, cache=cache)
+    metals, ages, native_lam, spectra = resources.load_resource('stellar_population_models', model, cache=cache)
     if wave[0] < native_lam[0] or wave[-1] > native_lam[-1]:
         raise ValueError('Wavelengths exceed the BC03 table range.')
     sampled = sp.interpolate.interp1d(native_lam, spectra, axis=-1, assume_sorted=True)(wave)
     spectral_chunks = [(start, min(start+frequency_chunk_size, wave.size)) for start in range(0, wave.size, frequency_chunk_size)]
     stellar_spectra = [sp.interpolate.RegularGridInterpolator((metals, ages), sampled[..., start:stop])
                        for start, stop in spectral_chunks]
-    mass_fraction = None if stellar_mass_is_initial else _BC03_current_mass_fraction(model, metals, ages)
+    mass_fraction = None if stellar_mass_is_initial else resources._BC03_current_mass_fraction(model, metals, ages)
     nu = c.c.cgs.value/(wave*u.AA).to_value(u.cm)
     k_abs, k_sca = rad.kappa_dust_MRN_cgs(nu, dust_to_gas=1.0)
     wavelength_jacobian = c.c.cgs.value/(wave*u.AA).to_value(u.cm)**2 * u.AA.to(u.cm)
