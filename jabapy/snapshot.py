@@ -768,12 +768,14 @@ def _add_convenience_properties(cls):
         if vcenter is not None and not u.is_unit_like(vcenter): # TODO: eventually also convert unit-strs and assume default velocity unit if no units
             raise ValueError("Velocity center must have units.")
 
+        # detach centers from cached particle arrays before any in-place transformation
+        centers = {key: value.copy() if value is not None else None for key, value in (('position', center), ('velocity', vcenter))}
         if absolute:
             self.reset_transform()  # reset to original snapshot orientation before applying new absolute transformation
 
         # transform the center to coordinates in the original snapshot orientation, setting new absolute center (to original coords) and relative center (to current coords)
         relative_centers = {}
-        for _centers_like, _center in (('position', center), ('velocity', vcenter)): # supported centers-like values
+        for _centers_like, _center in centers.items(): # supported centers-like values
             relative_centers[_centers_like] = coord.transform_general_tensor(_center, T=self._inv_transformation_matrix, transforms_like='vector') if _center is not None else None
             self.absolute_centers[_centers_like] = (
                 ( (relative_centers[_centers_like] if relative_centers[_centers_like] is not None else 0) + 
@@ -805,7 +807,7 @@ def _add_convenience_properties(cls):
                     _attr = self._get_dataset_attr_name(_group, _dset)
                     _data = coord.transform_general_tensor(
                         getattr(self, _attr), 
-                        center=relative_centers[_centers_like], 
+                        center=centers.get(_centers_like),
                         T=_relative_T, 
                         transforms_like=_transforms_like
                     )
@@ -1382,5 +1384,4 @@ def load(filepath, verbose=False):
     if verbose:
         print(f"Loading GIZMO snapshot from file {filepath} ...")
     return load_gizmo(filepath, debugging=verbose)
-
 
