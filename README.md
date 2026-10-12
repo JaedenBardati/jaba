@@ -43,6 +43,37 @@ Once you have run the install script, you can use the following commands in your
 
 Use `import jaba` in the python environment to access `jabapy`. For the `jabapy` python package code, see the `examples` directory for jupyter notebook example usages. 
 
+### Multipanel figures
+
+Use `jaba.visual.Figure` to arrange plots with the same settings as the standalone
+plotting helpers. Indices are zero-based `(row, column)`, so `[0, 0]` is the top-left
+panel. Repeated calls on an explicit panel overlay data there.
+
+```python
+from jaba import visual as jv
+
+fig = jv.Figure(2, 2, figsize=(8, 6), xlabel='x')
+fig[0, 0].plot([0, 1, 2], [0, 1, 4], title='Lines', label='first')
+fig[0, 0].plot([0, 1, 2], [0, 2, 3], label='second')
+fig[0, 1].scatter([0, 1, 2], [2, 0, 1], title='Points')
+fig[1, 0].hist([0, 0, 1, 2, 2, 2], bins=3, title='Histogram')
+fig[1, 1].imshow([[0, 1], [2, 3]], title='Image', show_colorbar=True)
+fig.draw(show=True)
+fig.draw(out='multipanel.png')
+```
+
+Without an explicit panel, `fig.plot(...)` and the other plotting methods choose the
+first panel without plotted data, in reading order. If all panels contain data, select
+one explicitly. `fig[:, :].plot(...)` plots on every selected panel. Create a spanning
+panel with `fig.add_axis(0, slice(None))` before filling those cells; overlapping panels
+are rejected. A span is plotted only once even when several selected cells refer to it.
+
+Constructor settings provide defaults; per-panel calls override them. Access the raw
+Matplotlib axes with `fig[0, 0].ax`, or wrap an existing shared subplot grid with
+`jv.Figure(fig=existing_figure)`. `draw()` retains panels by default; `clear()` and
+`close()` act on this figure explicitly. Plotting methods return their usual artists,
+or a list of results for a selection containing multiple panels.
+
 ### Galaxy images
 
 Render a snapshot with the continuum, bandpass and plotting steps in one call:
