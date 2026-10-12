@@ -35,6 +35,74 @@ def _BC03_current_mass_fraction(model, metals, ages):
     return sp.interpolate.RegularGridInterpolator((metals, ages), np.stack([row[1] for row in fractions]))
 
 
+def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effective',
+                 percentile=99.5, stretch=0.03, ax=None, title=None, continuum=None,
+                 cache=True, **continuum_kwargs):
+    """Render a galaxy RGB image in one call, using the notebook's shared asinh stretch.
+
+    Pass a snapshot and any galaxy_continuum options (npix, grid_shape, Lbox, inner_radius,
+    workers, log, etc.). Defaults here use 128 linear wavelengths from 0.28 to 1.25 micron
+    and omit optical-depth cubes. Explicit lam or wavelength_range overrides that range.
+    Alternatively pass continuum=the result of galaxy_continuum or raytrace_galaxy_continuum
+    to recolor a cube without another calculation; do not also supply snapshot/RT options.
+
+    bands assigns three radiation.load_bandpass names to display red, green and blue.
+    The default RGB filters are approximate visible test responses, not calibrated human
+    vision or sRGB. Johnson I/V/B and SDSS i/r/g are alternative false-color assignments.
+    component selects pure_emission, absorption or effective attenuation. The common
+    asinh stretch preserves channel ratios before clipping to [0, 1]; percentile sets
+    the positive mean-brightness reference and stretch sets its linear-to-log transition.
+    Empty images remain black. Filter coverage must fit inside the continuum wavelengths.
+
+    Returns rgb (y, x, 3), unstretched band-averaged channels with I_lambda units per micron,
+    extent in kpc, bands, component, scale, figure, ax and the Matplotlib image artist.
+    An optional ax receives the plot; the figure is kept open for notebook display/saving.
+    Full spectral cubes are not retained in the result. No snapshot data are modified.
+    """
+
+    # validate display settings before preparing or tracing the galaxy
+    if isinstance(bands, str) or len(bands) != 3: raise ValueError('Choose three filter names in display red, green, blue order.')
+    if component not in ('pure_emission', 'absorption', 'effective'): raise ValueError('Unknown continuum component.')
+    if not np.isfinite(percentile) or not 0 < percentile <= 100: raise ValueError('percentile must lie in (0, 100].')
+    if not np.isfinite(stretch) or stretch <= 0: raise ValueError('stretch must be finite and positive.')
+    if continuum is not None and (snap is not None or continuum_kwargs): raise ValueError('Use either a snapshot with RT options or an existing continuum.')
+    if continuum is None and snap is None: raise ValueError('Provide a snapshot or an existing continuum.')
+    profiles = [rad.load_bandpass(name, cache=cache) for name in bands]
+
+    # reuse the complete continuum workflow with optical sampling for a visual image
+    if continuum is None:
+        if continuum_kwargs.get('lam') is None and continuum_kwargs.get('wavelength_range') is None:
+            continuum_kwargs['wavelength_range'] = [0.28, 1.25]*u.micron
+        continuum_kwargs.setdefault('n_wavelength', 128)
+        continuum_kwargs.setdefault('wavelength_spacing', 'linear')
+        continuum_kwargs.setdefault('return_optical_depth', False)
+        continuum = galaxy_continuum(snap, cache=cache, **continuum_kwargs)
+
+    # integrate the chosen filters and apply the notebook's common brightness stretch
+    unit = u.erg/u.s/u.cm**2/u.sr/u.micron
+    channels = np.stack([rad.integrate_bandpass(continuum['wavelength'], continuum['datacubes'][component],
+                        profile, normalize=True).to_value(unit) for profile in profiles], axis=-1)
+    if channels.ndim != 3 or np.any(~np.isfinite(channels)): raise ValueError('The continuum must produce finite 2D band images.')
+    brightness = np.mean(channels, axis=-1)
+    positive = brightness > 0
+    scale = np.percentile(brightness[positive], percentile) if np.any(positive) else 0.
+    rgb = np.zeros_like(channels)
+    if scale > 0:
+        stretched = np.arcsinh(brightness/(stretch*scale))/np.arcsinh(1/stretch)
+        np.divide(channels*stretched[..., None], brightness[..., None], out=rgb, where=positive[..., None])
+        np.clip(rgb, 0, 1, out=rgb)
+
+    # plot through the shared visual helper and keep the figure available to the caller
+    from ..utils import visual as jv
+    extent = continuum['extent'].to(u.kpc)
+    if title is None: title = 'Approximate visible RGB' if tuple(bands) == ('RGB.R', 'RGB.G', 'RGB.B') else ' / '.join(bands)+' (false color)'
+    image = jv.imshow(rgb, ax=ax, origin='lower', extent=extent.value, aspect='equal',
+                      xlabel='x [kpc]', ylabel='y [kpc]', title=title, show_colorbar=False,
+                      show=False, clf_after=False, close_after=False)
+    return dict(rgb=rgb, channels=channels*unit, extent=extent, bands=tuple(bands), component=component,
+                scale=scale*unit, figure=image.figure, ax=image.axes, image=image)
+
+
 def galaxy_continuum(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix=64, grid_shape=64,
                      model='BC03_miles_chabrier', star_type=4, dust_to_metal=0.5,
                      dust_temperature=None, dust_sublimation_temperature=1500*u.K,

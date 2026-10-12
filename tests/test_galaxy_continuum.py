@@ -40,6 +40,17 @@ class TestGalaxyContinuum(unittest.TestCase):
         fraction.start(); self.addCleanup(fraction.stop)
         self.kw = dict(lam=[.1, 10, 1000]*u.micron, Lbox=1*u.kpc, grid_shape=4, npix=2, N_NGB=8, workers=1)
 
+    def test_one_call_visual_image(self):
+        import matplotlib.pyplot as plt
+        self.addCleanup(plt.close, 'all')
+        options = {key: value for key, value in self.kw.items() if key != 'lam'}
+        image = galaxy.galaxy_image(self.snap, **options)
+        self.assertEqual(image['rgb'].shape, (2, 2, 3))
+        self.assertTrue(np.all(np.isfinite(image['rgb'])))
+        self.assertTrue(np.any(image['rgb'] > 0))
+        self.assertTrue(np.all((image['rgb'] >= 0) & (image['rgb'] <= 1)))
+        np.testing.assert_allclose(image['extent'].to_value(u.kpc), [-.5, .5, -.5, .5])
+
     def test_continuum_shapes_attenuation_and_chunking(self):
         one = galaxy.galaxy_continuum(self.snap, frequency_chunk_size=1, chunk_size=1, **self.kw)
         all_channels = galaxy.galaxy_continuum(self.snap, frequency_chunk_size=3, chunk_size=10, **self.kw)

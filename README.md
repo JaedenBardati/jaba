@@ -43,6 +43,31 @@ Once you have run the install script, you can use the following commands in your
 
 Use `import jaba` in the python environment to access `jabapy`. For the `jabapy` python package code, see the `examples` directory for jupyter notebook example usages. 
 
+### Galaxy images
+
+Render a snapshot with the continuum, bandpass and plotting steps in one call:
+
+```python
+from jaba.apps import galaxy
+
+image = galaxy.galaxy_image(snap, Lbox=10, grid_shape=128, npix=512, workers=-1, log=True)
+image['figure'].savefig('galaxy_rgb.png')
+```
+
+`Lbox` is in kpc when supplied without units. This uses the approximate visible RGB
+filters and the notebook's shared asinh stretch; it is not a calibrated true-color image.
+Choose `bands=('SDSS.i', 'SDSS.r', 'SDSS.g')` or Johnson I/V/B for false color.
+`component` selects `effective` (default), `absorption`, or `pure_emission`.
+`percentile` and `stretch` control the display, while additional keywords go to
+`galaxy_continuum`. The image helper defaults to 128 linear wavelengths over
+0.28–1.25 micron and omits optical-depth cubes; `lam` or `wavelength_range` can override
+that coverage. Standard filters download through the resource cache on first use.
+
+For an existing calculation, use `galaxy.galaxy_image(continuum=galaxy_rt)` to change
+filters or stretch without tracing again. The result contains the RGB array, physical
+band images, extent, figure, axes and image artist; it does not retain the spectral cube.
+Pass `ax=` to draw into an existing subplot.
+
 ### Running Simulations
 
 If you installed the relevant optional submodules, you can run the following command examples.
