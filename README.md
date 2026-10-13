@@ -148,6 +148,29 @@ Pass `ax=` to draw into an existing subplot. When `npix` is supplied without
 The default `inner_radius` is 5% of a pixel width (`0.05 * Lbox / npix`);
 pass `inner_radius=0` to disable the central particle cutoff.
 
+### Quick galaxy images
+
+For a quick centered galaxy render, run:
+
+```bash
+py tools/galaxy_image.py /path/to/snapshot_334.hdf5 --box-size 20 --npix 1920 --output galaxy_334
+```
+
+This loads the snapshot, resets transformations and centers on particle type 3.
+`--center-type` changes the centering target; `--faceon-radius-kpc` optionally rotates it.
+The default grid is `min(npix, 512)` per axis. With the default 4 GiB coefficient budget,
+spectral chunks are capped at 24 at a 128-cubed grid and 3 at 512-cubed; automatic
+wavelength batching also bounds live coefficients. Use `--grid-shape`,
+`--frequency-chunk-size` and `--max-grid-gib` to override these settings.
+The tool uses filter-derived RGB wavelengths unless `--wavelengths-nm` is supplied.
+Use `--stellar-deposition kernel --stellar-ngb 32` for optional stellar smoothing.
+
+Outputs are `galaxy_334.png` (exactly `npix` by `npix`, without axes or margins) and
+`galaxy_334.npy` (unquantized display RGB, shape `(npix, npix, 3)`, values in `[0, 1]`).
+The array retains the renderer's lower-origin convention; display it with `origin='lower'`.
+It contains stretched RGB, not physical spectral intensities. Existing output files
+are refused; choose a new prefix. Run with `--help` for all options.
+
 ### Running Simulations
 
 If you installed the relevant optional submodules, you can run the following command examples.
