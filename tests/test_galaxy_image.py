@@ -1,4 +1,5 @@
 import tempfile
+import inspect
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -114,8 +115,26 @@ class TestGalaxyImage(unittest.TestCase):
             with self.assertRaises(TypeError): galaxy.galaxy_image(object(), plot=1)
             trace.assert_not_called()
 
+    def test_filter_driven_sampling_and_regular_override(self):
+        profiles = [dict(wavelength=np.array(wave)*u.nm, transmission=np.array([0., 1., 0.]), detector='energy')
+                    for wave in ([400., 450., 500.], [600., 601., 602.], [700., 740., 780.])]
+        with patch.object(galaxy.rad, 'load_bandpass', side_effect=profiles), patch.object(galaxy, 'galaxy_datacube', return_value=self.datacube) as trace:
+            galaxy.galaxy_image(object(), bands=('a', 'b', 'c'), plot=False)
+            wave = trace.call_args.kwargs['lam'].to_value(u.nm)
+            self.assertEqual(wave[0], 400.); self.assertEqual(wave[-1], 780.)
+            self.assertGreaterEqual(np.count_nonzero((wave >= 600.) & (wave <= 602.)), 21)
+            self.assertTrue(all(center in wave for center in (450., 601., 740.)))
+        with patch.object(galaxy, 'galaxy_datacube', return_value=self.datacube) as trace:
+            galaxy.galaxy_image(object(), n_wavelength=40, wavelength_spacing='log', plot=False)
+            self.assertNotIn('lam', trace.call_args.kwargs)
+            np.testing.assert_allclose(trace.call_args.kwargs['wavelength_range'].to_value(u.nm), [380., 780.])
+            self.assertEqual(trace.call_args.kwargs['n_wavelength'], 40)
+            self.assertEqual(trace.call_args.kwargs['wavelength_spacing'], 'log')
+
     def test_one_call_defaults_and_explicit_spectral_grid(self):
         snap = object()
+        inner_percent = inspect.signature(galaxy.galaxy_image).parameters.get('_inner_percent_of_pixel_removed')
+        inner_fraction = .005 if inner_percent is None else .01*inner_percent.default
         with patch.object(galaxy, 'galaxy_datacube', return_value=self.datacube) as trace:
             galaxy.galaxy_image(snap, npix=512, grid_shape=128, inner_radius=.1, log=True)
             self.assertIs(trace.call_args.args[0], snap)
@@ -124,14 +143,15 @@ class TestGalaxyImage(unittest.TestCase):
             self.assertEqual(options['inner_radius'], .1); self.assertTrue(options['log'])
             self.assertEqual(options['n_wavelength'], 128); self.assertEqual(options['wavelength_spacing'], 'linear')
             self.assertFalse(options['return_optical_depth'])
-            np.testing.assert_allclose(options['wavelength_range'].to_value(u.micron), [.28, 1.25])
+            np.testing.assert_allclose(options['lam'].to_value(u.nm), np.unique(np.r_[np.linspace(380., 780., 21), 455., 545., 610.]))
+            self.assertNotIn('wavelength_range', options)
             galaxy.galaxy_image(snap, npix=256)
             self.assertEqual(trace.call_args.kwargs['grid_shape'], 256)
-            self.assertAlmostEqual(trace.call_args.kwargs['inner_radius'].to_value(u.pc), 1.953125)
+            self.assertAlmostEqual(trace.call_args.kwargs['inner_radius'].to_value(u.pc), inner_fraction*10000/256)
             galaxy.galaxy_image(snap, lam=self.lam, return_optical_depth=True, cache=False)
             self.assertIs(trace.call_args.kwargs['lam'], self.lam)
             self.assertNotIn('grid_shape', trace.call_args.kwargs)
-            self.assertAlmostEqual(trace.call_args.kwargs['inner_radius'].to_value(u.pc), 7.8125)
+            self.assertAlmostEqual(trace.call_args.kwargs['inner_radius'].to_value(u.pc), inner_fraction*10000/64)
             self.assertNotIn('wavelength_range', trace.call_args.kwargs)
             self.assertFalse(trace.call_args.kwargs['cache'])
             galaxy.galaxy_image(snap, wavelength_range=[.1, 2.], n_wavelength=200, wavelength_spacing='log')
@@ -140,6 +160,6 @@ class TestGalaxyImage(unittest.TestCase):
             self.assertEqual(trace.call_args.kwargs['wavelength_spacing'], 'log')
             for Lbox in (2., 2000*u.pc):
                 galaxy.galaxy_image(snap, Lbox=Lbox, npix=200)
-                self.assertAlmostEqual(trace.call_args.kwargs['inner_radius'].to_value(u.pc), .5)
+                self.assertAlmostEqual(trace.call_args.kwargs['inner_radius'].to_value(u.pc), inner_fraction*2000/200)
             galaxy.galaxy_image(snap, inner_radius=0)
             self.assertEqual(trace.call_args.kwargs['inner_radius'], 0)

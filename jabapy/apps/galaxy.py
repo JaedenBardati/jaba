@@ -19,8 +19,12 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
     """Render a galaxy RGB image in one call, using the notebook's shared asinh stretch.
 
     Pass a snapshot and any galaxy_datacube options (npix, grid_shape, Lbox, inner_radius,
-    workers, log, etc.). Defaults here use 128 linear wavelengths from 0.28 to 1.25 micron
-    and omit optical-depth cubes. Explicit lam or wavelength_range overrides that range.
+    workers, log, etc.). By default each filter supplies 21 evenly spaced wavelengths
+    across its full table plus its transmission peak; their sorted union is traced.
+    RGB.R/G/B give 24 samples over 380--780 nm. This is a continuum sampling heuristic;
+    use explicit lam for spectral features or convergence checks. Explicit wavelength_range
+    overrides filter sampling; n_wavelength or wavelength_spacing alone requests a regular
+    grid spanning all selected filters. Optical-depth cubes are omitted by default.
     If npix is supplied without grid_shape, the grid uses npix cells along each axis.
     supersampling=2 averages a 2 by 2 ray pattern per pixel before the RGB stretch;
     use supersampling=1 for the original single-ray sampling. Output size remains npix.
@@ -59,7 +63,13 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
     # reuse the complete datacube workflow with optical sampling for a visual image
     if datacube is None:
         if datacube_kwargs.get('lam') is None and datacube_kwargs.get('wavelength_range') is None:
-            datacube_kwargs['wavelength_range'] = [0.28, 1.25]*u.micron
+            waves = [profile['wavelength'].to_value(u.nm) for profile in profiles]
+            if 'n_wavelength' in datacube_kwargs or 'wavelength_spacing' in datacube_kwargs:
+                datacube_kwargs['wavelength_range'] = [min(wave[0] for wave in waves), max(wave[-1] for wave in waves)]*u.nm
+            else:
+                samples = [np.r_[np.linspace(wave[0], wave[-1], 21), wave[np.argmax(profile['transmission'])]]
+                           for wave, profile in zip(waves, profiles)]
+                datacube_kwargs['lam'] = np.unique(np.concatenate(samples))*u.nm
         if 'npix' in datacube_kwargs: datacube_kwargs.setdefault('grid_shape', datacube_kwargs['npix'])
         if 'inner_radius' not in datacube_kwargs:
             datacube_kwargs['inner_radius'] = 0.05*u.Quantity(datacube_kwargs.get('Lbox', 10), u.kpc)/datacube_kwargs.get('npix', 64)

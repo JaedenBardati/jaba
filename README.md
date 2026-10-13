@@ -120,9 +120,12 @@ filters and the notebook's shared asinh stretch; it is not a calibrated true-col
 Choose `bands=('SDSS.i', 'SDSS.r', 'SDSS.g')` or Johnson I/V/B for false color.
 `component` selects `effective` (default), `absorption`, or `pure_emission`.
 `percentile` and `stretch` control the display, while additional keywords go to
-`galaxy_datacube`. The image helper defaults to 128 linear wavelengths over
-0.28–1.25 micron and omits optical-depth cubes; `lam` or `wavelength_range` can override
-that coverage. Standard filters download through the resource cache on first use.
+`galaxy_datacube`. The image helper chooses 21 evenly spaced samples across each selected filter table
+plus its peak, then traces their sorted union. RGB.R/G/B produce 24 wavelengths over
+380–780 nm. This is a continuum sampling heuristic; pass explicit `lam` for finer
+sampling or spectral features. `wavelength_range` overrides filter sampling; specifying
+`n_wavelength` or `wavelength_spacing` alone creates a regular grid over the combined
+filter range. Optical-depth cubes are omitted by default. Standard filters download through the resource cache on first use.
 
 For an existing calculation, use `galaxy.galaxy_image(datacube=galaxy_rt)` to change
 filters or stretch without tracing again. The result contains the RGB array, physical
