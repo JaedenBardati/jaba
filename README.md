@@ -97,6 +97,15 @@ spread over neighboring cells with a compact cubic kernel using the snapshot's g
 smoothing lengths. The discrete cell-center weights conserve each selected particle's
 mass and luminosity. Kernels too small to reach any cell center use the containing cell;
 no arbitrary minimum smoothing radius is added. Stars retain direct deposition.
+To smooth stellar emission as well, pass `stellar_deposition='kernel', stellar_ngb=32`.
+Each star's cubic-kernel support radius is its distance to the 32nd other real star;
+wind particles are excluded. Neighbours come from the full snapshot, including outside
+the image box, while only selected stars deposit luminosity. Fewer neighbours use the
+furthest available star; an isolated star deposits directly. Kernel weights conserve
+luminosity at each wavelength and renormalize at box boundaries. Radii are computed
+once per datacube call and reused across wavelength batches. This can blur compact
+clusters, increase occupied grid cells and add preparation time; direct stellar
+deposition remains the default.
 Particle centers select the box and central exclusion; kernels clipped by the box are
 renormalized inside it. Use `dust_deposition='direct'` to reproduce the former behavior.
 Kernel support expands compact occupancy and can require more memory and preparation

@@ -130,6 +130,31 @@ def _galaxy_wavelengths(lam, wavelength_range, n_wavelength, wavelength_spacing)
     return lam
 
 
+def _stellar_kernel_radii(snap, star_type, stellar_ngb, chunk_size, log):
+    """Find support radii from other real stars in the snapshot's current frame."""
+    if isinstance(stellar_ngb, bool) or not isinstance(stellar_ngb, (int, np.integer)) or stellar_ngb < 1:
+        raise ValueError('stellar_ngb must be a positive integer.')
+    if chunk_size < 1: raise ValueError('chunk_size must be positive.')
+
+    # exclude wind particles and query only the requested neighbour rank in bounded chunks
+    formed = snap[star_type, 'StellarFormationTime'].to_value(u.yr)
+    valid = np.flatnonzero(np.isfinite(formed) & (formed > 0))
+    radii = np.zeros(formed.size)
+    if valid.size < 2: return radii
+    positions = snap.pos[star_type][valid].to_value(u.cm)
+    rank = min(stellar_ngb+1, valid.size)
+    if log: print(f'Stellar smoothing: {valid.size:,} stars, {rank-1} neighbours.', flush=True)
+    tree = sp.spatial.cKDTree(positions)
+    last_report = time.perf_counter()
+    for first in range(0, valid.size, chunk_size):
+        last = min(first+chunk_size, valid.size)
+        radii[valid[first:last]] = tree.query(positions[first:last], k=[rank])[0][:, 0]
+        if log and time.perf_counter()-last_report >= 5:
+            print(f'Stellar smoothing: {last/valid.size:.1%} queried.', flush=True)
+            last_report = time.perf_counter()
+    return radii
+
+
 def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix=64, grid_shape=64,
                      model='BC03_miles_chabrier', star_type=4, dust_to_metal=0.5,
                      dust_temperature=None, dust_sublimation_temperature=1500*u.K,
@@ -137,7 +162,7 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
                      chunk_size=250000, frequency_chunk_size=4, step_fraction=0.25, N_NGB=8,
                      workers=-1, query_chunk_size=4096, log=False, cache=True,
                      wavelength_range=None, n_wavelength=24, wavelength_spacing='log',
-                     storage='auto', storage_dir=None, max_grid_bytes=4*1024**3, inner_radius=0*u.kpc, backend='auto', return_optical_depth=True, supersampling=2, dust_deposition='kernel', wavelength_batch_size='auto'):
+                     storage='auto', storage_dir=None, max_grid_bytes=4*1024**3, inner_radius=0*u.kpc, backend='auto', return_optical_depth=True, supersampling=2, dust_deposition='kernel', wavelength_batch_size='auto', stellar_deposition='direct', stellar_ngb=32):
     """Trace intrinsic stellar populations and thermal MRN dust through a GIZMO galaxy toward +z.
 
     Lbox is the full physical image width; depth defaults to Lbox. center is relative to
@@ -146,7 +171,13 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
     from center (bare numbers mean kpc; default zero). This cuts particles before gridding;
     interpolation can smooth the edge of the excluded region.
     Data come from the snapshot accessors in its current units and frame.
-    Stellar luminosity is binned directly. By default dust_deposition='kernel' spreads
+    Stellar luminosity defaults to direct binning. stellar_deposition='kernel' instead
+    conserves luminosity while spreading it with a cubic kernel whose support is the
+    distance to the stellar_ngb-th other real star (default 32). Neighbours include stars
+    outside the rendering box and inner exclusion, but exclude wind particles. With fewer
+    stars, use the furthest available neighbour; an isolated star uses direct deposition.
+    Radii are computed once per call and reused across wavelength batches. This smooths
+    compact stellar structure and can expand compact-grid occupancy. By default dust_deposition='kernel' spreads
     gas dust mass and thermal emission with the compact cubic kernel using snap.smooth[0]
     as its support radius. Cell-center weights are normalized to conserve each selected
     particle's mass and luminosity. Unresolved kernels with no supported cell centers
@@ -214,6 +245,8 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
             if capacity >= 2: batch_size = min(batch_size, capacity)
     elif wavelength_batch_size is not None and wavelength_batch_size != 'auto':
         batch_size = min(batch_size, wavelength_batch_size)
+    if stellar_deposition not in ('direct', 'kernel'): raise ValueError("stellar_deposition must be 'direct' or 'kernel'.")
+    stellar_smoothing = _stellar_kernel_radii(snap, star_type, stellar_ngb, chunk_size, log) if stellar_deposition == 'kernel' else None
     result = None
     for first in range(0, lam.size, batch_size):
         last = min(first+batch_size, lam.size)
@@ -228,7 +261,8 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
             clip_population=clip_population, chunk_size=chunk_size, log=log, cache=cache,
             wavelength_range=None, n_wavelength=n_wavelength, wavelength_spacing=wavelength_spacing,
             frequency_chunk_size=frequency_chunk_size, storage=storage, storage_dir=storage_dir, max_grid_bytes=max_grid_bytes,
-            inner_radius=inner_radius, dust_deposition=dust_deposition)
+            inner_radius=inner_radius, dust_deposition=dust_deposition, stellar_deposition=stellar_deposition,
+            stellar_ngb=stellar_ngb, _stellar_smoothing=stellar_smoothing)
         rendered = raytrace_galaxy_datacube(prepared, npix=npix, frequency_chunk_size=frequency_chunk_size,
             step_fraction=step_fraction, N_NGB=N_NGB, workers=workers, query_chunk_size=query_chunk_size, log=log,
             backend=backend, return_optical_depth=return_optical_depth, supersampling=supersampling)
@@ -258,7 +292,8 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
                             dust_temperature=None, dust_sublimation_temperature=1500*u.K,
                             stellar_mass_is_initial=False, clip_population=True, chunk_size=250000,
                             log=False, cache=True, wavelength_range=None, n_wavelength=24, wavelength_spacing='log',
-                            frequency_chunk_size=4, storage='auto', storage_dir=None, max_grid_bytes=4*1024**3, inner_radius=0*u.kpc, dust_deposition='kernel'):
+                            frequency_chunk_size=4, storage='auto', storage_dir=None, max_grid_bytes=4*1024**3, inner_radius=0*u.kpc, dust_deposition='kernel', stellar_deposition='direct', stellar_ngb=32,
+                            _stellar_smoothing=None):
     """Read a GIZMO snapshot and prepare reusable stellar and dust coefficients.
 
     Uses the physics, units and spatial deposition described in galaxy_datacube.
@@ -289,7 +324,9 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
     dust_deposition='kernel' (default) requires gas smoothing lengths and expands compact
     occupancy to include the complete deposited support. This can increase coefficient
     storage and preparation time; the same memory budget checks and disk storage apply.
-    'direct' reproduces the former single-cell gas deposition. Stars remain directly binned.
+    'direct' reproduces the former single-cell gas deposition. stellar_deposition='kernel'
+    enables the optional luminosity-conserving stellar smoothing described above;
+    stellar_ngb defaults to 32. Stellar deposition defaults to 'direct'.
     """
 
     # validate the physical image and wavelength grids
@@ -315,6 +352,9 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
     if dust_deposition not in ('kernel', 'direct'): raise ValueError("dust_deposition must be 'kernel' or 'direct'.")
     if storage not in ('auto', 'dense', 'compact') or (max_grid_bytes is not None and max_grid_bytes <= 0):
         raise ValueError("Use storage='auto', 'dense' or 'compact' and a positive max_grid_bytes or None.")
+    if stellar_deposition not in ('direct', 'kernel'): raise ValueError("stellar_deposition must be 'direct' or 'kernel'.")
+    if stellar_deposition == 'kernel' and _stellar_smoothing is None:
+        _stellar_smoothing = _stellar_kernel_radii(snap, star_type, stellar_ngb, chunk_size, log)
     dense_bytes = n_cells*(wave.size+1)*8
     if storage == 'auto': storage = 'compact' if max_grid_bytes is not None and dense_bytes > max_grid_bytes else 'dense'
     if log: print(f'Galaxy dense grid: {dense_bytes/1024**3:.2f} GiB; using {storage} storage.', flush=True)
@@ -345,6 +385,11 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
                     temp = snap[part, 'Dust_Temperature'][start:start+chunk_size][inside].to_value(u.K) if dust_temperature is None else np.full(h.shape, u.Quantity(dust_temperature, u.K).to_value(u.K))
                     active = (snap.mass[part][start:start+chunk_size][inside].to_value(u.g)*ratio > 0) & (temp <= u.Quantity(dust_sublimation_temperature, u.K).to_value(u.K))
                     bin_particles_kernel(pos[inside][active], h=h[active], mins=lower, maxs=upper, dims=dims, occupancy=occupied)
+                elif part == star_type and stellar_deposition == 'kernel':
+                    formed = snap[part, 'StellarFormationTime'][start:start+chunk_size][inside].to_value(u.yr)
+                    active = np.isfinite(formed) & (formed > 0)
+                    h = _stellar_smoothing[start:start+chunk_size][inside][active]
+                    bin_particles_kernel(pos[inside][active], h=h, mins=lower, maxs=upper, dims=dims, occupancy=occupied)
                 else: occupied[np.ravel_multi_index(bins.T, tuple(dims))] = True
                 if log and time.perf_counter()-last_report >= 5:
                     fraction = min(start+chunk_size, positions.shape[0])/positions.shape[0]
@@ -433,6 +478,7 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
             else:
                 formed = snap[part, 'StellarFormationTime'][start:stop][inside].to_value(u.yr)
                 valid = np.isfinite(formed) & (formed > 0)
+                if stellar_deposition == 'kernel': h = _stellar_smoothing[start:stop][inside][valid]
                 counts['wind_excluded'] += int(np.sum(~valid))
                 selected, formed, masses, metallicity = selected[valid], formed[valid], masses[valid], metallicity[valid]
                 age = now-formed
@@ -450,10 +496,10 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
                 valid_bins = np.all(bins < dims, axis=1)
                 bin_pos = np.full((selected.shape[0], 1), n_fields, dtype=float)
                 bin_pos[valid_bins, 0] = field_indices[np.ravel_multi_index(bins[valid_bins].T, tuple(dims))]+0.5
-            kernel_gas = part == 0 and dust_deposition == 'kernel'
-            kernel_kwargs = dict(h=h, mins=lower, maxs=upper, dims=dims, field_indices=field_indices) if kernel_gas else {}
+            kernel_deposition = (part == 0 and dust_deposition == 'kernel') or (part == star_type and stellar_deposition == 'kernel')
+            kernel_kwargs = dict(h=h, mins=lower, maxs=upper, dims=dims, field_indices=field_indices) if kernel_deposition else {}
             if part == 0:
-                if kernel_gas: bin_particles_kernel(selected, mass/volume, out=dust_grid, **kernel_kwargs)
+                if kernel_deposition: bin_particles_kernel(selected, mass/volume, out=dust_grid, **kernel_kwargs)
                 else: bin_particles_direct(bin_pos, mass/volume, out=dust_grid, **bin_kwargs)
             for (first, last), stellar_spectrum in zip(spectral_chunks, stellar_spectra):
                 if part == 0:
@@ -467,7 +513,7 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
                     luminosity = stellar_spectrum(points)
                     luminosity *= (mass*u.Lsun.to(u.erg/u.s)/(4*np.pi*volume))[:, None]
                 out = emission_grid[first] if last-first == 1 else emission_grid[first:last]
-                if kernel_gas: bin_particles_kernel(selected, luminosity, out=out, **kernel_kwargs)
+                if kernel_deposition: bin_particles_kernel(selected, luminosity, out=out, **kernel_kwargs)
                 else: bin_particles_direct(bin_pos, luminosity, out=out, **bin_kwargs)
                 del luminosity
             if storage_path is not None:
@@ -480,7 +526,7 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
     return dict(wavelength=lam, emission=emission, dust_density=dust_density, field_indices=field_indices,
                 storage=storage, storage_path=storage_path, coefficient_bytes=coefficient_bytes, k_abs=k_abs, k_sca=k_sca,
                 lower=lower, upper=upper, cell_width=cell_width, Lbox=Lbox, center=center,
-                grid_shape=tuple(dims), particle_counts=counts, dust_deposition=dust_deposition)
+                grid_shape=tuple(dims), particle_counts=counts, dust_deposition=dust_deposition, stellar_deposition=stellar_deposition, stellar_ngb=stellar_ngb)
 
 
 def raytrace_galaxy_datacube(prepared, npix=64, frequency_chunk_size=4, step_fraction=0.25,

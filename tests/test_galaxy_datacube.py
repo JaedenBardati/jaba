@@ -23,6 +23,37 @@ def write_header(file):
 
 
 class TestGalaxyDatacube(unittest.TestCase):
+    def test_stellar_kernel_conservation_and_compact_support(self):
+        options = {key: value for key, value in self.kw.items() if key not in ('npix', 'N_NGB', 'workers')}
+        options.update(dust_to_metal=0, grid_shape=8)
+        direct = galaxy.prepare_galaxy_datacube(self.snap, **options)
+        dense = galaxy.prepare_galaxy_datacube(self.snap, stellar_deposition='kernel', **options)
+        compact = galaxy.prepare_galaxy_datacube(self.snap, stellar_deposition='kernel', storage='compact', **options)
+        np.testing.assert_allclose(dense['emission'].sum(axis=0), direct['emission'].sum(axis=0), rtol=1e-14)
+        self.assertGreater(np.count_nonzero(dense['emission']), np.count_nonzero(direct['emission']))
+        np.testing.assert_allclose(compact['emission'][compact['field_indices']], dense['emission'], rtol=1e-14)
+        self.assertEqual(dense['stellar_deposition'], 'kernel')
+        self.assertEqual(dense['stellar_ngb'], 32)
+
+    def test_stellar_neighbour_radii_exclude_self_and_wind(self):
+        class Stars:
+            pos = {4: np.column_stack((np.arange(5.), np.zeros((5, 2))))*u.cm}
+            def __getitem__(self, key): return np.array([1., 0., 1., 1., 1.])*u.yr
+        snap = Stars()
+        np.testing.assert_allclose(galaxy._stellar_kernel_radii(snap, 4, 1, 2, False), [2., 0., 1., 1., 1.])
+        np.testing.assert_allclose(galaxy._stellar_kernel_radii(snap, 4, 32, 2, False), [4., 0., 2., 3., 4.])
+        for ngb in (0, -1, True, 1.5):
+            with self.assertRaises(ValueError): galaxy._stellar_kernel_radii(snap, 4, ngb, 2, False)
+
+    def test_stellar_radii_reused_across_wavelength_batches(self):
+        options = dict(self.kw, stellar_deposition='kernel', wavelength_batch_size=2)
+        with patch.object(galaxy, '_stellar_kernel_radii', wraps=galaxy._stellar_kernel_radii) as radii:
+            batched = galaxy.galaxy_datacube(self.snap, **options)
+            self.assertEqual(radii.call_count, 1)
+        full = galaxy.galaxy_datacube(self.snap, **dict(options, wavelength_batch_size=None))
+        for name in full['datacubes']:
+            np.testing.assert_allclose(batched['datacubes'][name], full['datacubes'][name], rtol=1e-12)
+
     def test_wavelength_batches_match_full_kernel_transfer(self):
 
         # compare all transfer cases, both backends, supersampling and an odd final batch
