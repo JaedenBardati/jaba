@@ -127,6 +127,103 @@ def _cubic_kernel(q): # TODO update as above
 ##########################################
 
 ### Direct binning method for any geometry of grid ###
+@numba.njit(cache=True)
+def _deposit_cubic_cells(pos, h, qty, lower, width, dims, out, mapping, occupied, mark):
+    lo = np.empty(3, dtype=np.int64); hi = np.empty(3, dtype=np.int64)
+    for p in range(len(pos)):
+        if not mark and np.all(qty[p] == 0): continue
+        if np.any(pos[p] < lower) or np.any(pos[p] >= lower+width*dims): continue
+        total = 0.
+        for d in range(3):
+            lo[d] = max(0, int(np.ceil((pos[p, d]-h[p]-lower[d])/width[d]-.5)))
+            hi[d] = min(dims[d]-1, int(np.floor((pos[p, d]+h[p]-lower[d])/width[d]-.5)))
+        if h[p] > 0:
+            for i in range(lo[0], hi[0]+1):
+                dx = (lower[0]+(i+.5)*width[0]-pos[p, 0])/h[p]
+                for j in range(lo[1], hi[1]+1):
+                    dy = (lower[1]+(j+.5)*width[1]-pos[p, 1])/h[p]
+                    for k in range(lo[2], hi[2]+1):
+                        dz = (lower[2]+(k+.5)*width[2]-pos[p, 2])/h[p]
+                        weight = _cubic_kernel(np.sqrt(dx*dx+dy*dy+dz*dz))
+                        total += weight
+                        if mark and weight > 0: occupied[(i*dims[1]+j)*dims[2]+k] = True
+
+        # unresolved kernels remain in their containing cell without imposing an artificial radius
+        if total == 0:
+            cell = np.floor((pos[p]-lower)/width).astype(np.int64)
+            index = (cell[0]*dims[1]+cell[1])*dims[2]+cell[2]
+            if mark: occupied[index] = True
+            else:
+                row = mapping[index] if mapping.size else index
+                if mapping.size and row == 0: raise ValueError('Kernel support is missing from the compact index map.')
+                for channel in range(qty.shape[1]): out[channel, row] += qty[p, channel]
+            continue
+        if mark: continue
+
+        # normalize the retained cell weights to conserve each selected particle's quantity
+        for i in range(lo[0], hi[0]+1):
+            dx = (lower[0]+(i+.5)*width[0]-pos[p, 0])/h[p]
+            for j in range(lo[1], hi[1]+1):
+                dy = (lower[1]+(j+.5)*width[1]-pos[p, 1])/h[p]
+                for k in range(lo[2], hi[2]+1):
+                    dz = (lower[2]+(k+.5)*width[2]-pos[p, 2])/h[p]
+                    weight = _cubic_kernel(np.sqrt(dx*dx+dy*dy+dz*dz))/total
+                    if weight == 0: continue
+                    index = (i*dims[1]+j)*dims[2]+k
+                    row = mapping[index] if mapping.size else index
+                    if mapping.size and row == 0: raise ValueError('Kernel support is missing from the compact index map.')
+                    for channel in range(qty.shape[1]): out[channel, row] += weight*qty[p, channel]
+
+
+def bin_particles_kernel(pos, qty=None, *, h, mins, maxs, dims, out=None, field_indices=None, occupancy=None):
+    """Conservatively deposit particle quantities with the 3D compact cubic kernel.
+
+    h is the support radius, matching GIZMO/MFM smoothing lengths. Weights sample
+    the kernel at cell centers and are normalized over in-box cells. Particles with
+    centers outside the box are excluded; truncated kernels retain their full selected
+    quantity in the box. If no cell center lies in the support, use the containing cell.
+    This is discrete quadrature, not exact cell-volume integration, and converges as
+    cells resolve h. No minimum smoothing radius is imposed.
+    qty is (N,) or (N, M); output is dims or (M, *dims). Compact outputs instead use
+    (N_rows,) or (M, N_rows), with field_indices mapping flat cells to rows (zero empty).
+    Supply a flat boolean occupancy array and no qty/out to mark the same support
+    before compact allocation. Both modes accumulate in place without full-grid scratch
+    arrays or per-thread grid copies. Density deposition requires qty/cell_volume.
+    """
+
+    # validate geometry and compact or dense storage outside the particle loop
+    pos = np.asarray(pos, dtype=np.float64); h = np.asarray(h, dtype=np.float64)
+    lower = np.asarray(mins, dtype=float); upper = np.asarray(maxs, dtype=float)
+    dims = np.broadcast_to(np.asarray(dims, dtype=np.int64), (3,)).copy()
+    if pos.ndim != 2 or pos.shape[1] != 3 or h.shape != (len(pos),): raise ValueError('Require pos (N, 3) and h (N,).')
+    if lower.shape != (3,) or upper.shape != (3,) or np.any(dims < 1) or np.any(upper <= lower): raise ValueError('Invalid kernel grid geometry.')
+    if not np.all(np.isfinite(pos)) or not np.all(np.isfinite(h)) or np.any(h < 0): raise ValueError('Positions and nonnegative kernel radii must be finite.')
+    cells = int(np.prod(dims)); width = (upper-lower)/dims
+    mapping = np.empty(0, dtype=np.int64) if field_indices is None else np.asarray(field_indices)
+    if mapping.size and (mapping.shape != (cells,) or not np.issubdtype(mapping.dtype, np.integer)):
+        raise ValueError('field_indices must contain one integer per grid cell.')
+    if occupancy is not None:
+        if qty is not None or out is not None or mapping.size: raise ValueError('Occupancy marking does not accept quantities, output, or a mapping.')
+        if occupancy.shape != (cells,) or occupancy.dtype != bool or not occupancy.flags.writeable: raise ValueError('occupancy must be a writable flat boolean grid.')
+        _deposit_cubic_cells(pos, h, np.empty((0, 0)), lower, width, dims, np.empty((0, 0)), mapping, occupancy, True)
+        return occupancy
+    qty = np.asarray(qty, dtype=float)
+    if qty.ndim not in (1, 2) or qty.shape[0] != len(pos): raise ValueError('qty must have shape (N,) or (N, M).')
+    values = qty.reshape(len(pos), 1) if qty.ndim == 1 else qty
+    count = values.shape[1]
+    if mapping.size:
+        if out is None: raise ValueError('Compact deposition requires an output array.')
+        spatial = (out.shape[-1],)
+        if mapping.min() < 0 or mapping.max() >= spatial[0]: raise ValueError('Invalid compact coefficient row.')
+    else: spatial = tuple(dims)
+    shape = spatial if count == 1 else (count,)+spatial
+    if out is None: out = np.zeros(shape, dtype=float)
+    if out.shape != shape or out.dtype != np.float64 or not out.flags.writeable: raise ValueError('Output must be writable float64 with the deposition shape.')
+    flat = out.view(); flat.shape = (count, int(np.prod(spatial)))
+    _deposit_cubic_cells(pos, h, values, lower, width, dims, flat, mapping, np.empty(0, dtype=bool), False)
+    return out
+
+
 @numba.njit(parallel=False, cache=True)
 def _bin_particles_direct_serial(pos, qty, mins, maxs, dims, strides, grid):
     """

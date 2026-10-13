@@ -92,6 +92,18 @@ size and `grid_shape` is unchanged. Ray work grows approximately as the factor s
 offsets are accumulated one at a time rather than retaining an enlarged spectral cube.
 Optional optical-depth cubes contain mean ray depths, not effective attenuation depths.
 
+Dust defaults to `dust_deposition='kernel'`: gas dust mass and thermal emission are
+spread over neighboring cells with a compact cubic kernel using the snapshot's gas
+smoothing lengths. The discrete cell-center weights conserve each selected particle's
+mass and luminosity. Kernels too small to reach any cell center use the containing cell;
+no arbitrary minimum smoothing radius is added. Stars retain direct deposition.
+Particle centers select the box and central exclusion; kernels clipped by the box are
+renormalized inside it. Use `dust_deposition='direct'` to reproduce the former behavior.
+Kernel support expands compact occupancy and can require more memory and preparation
+time; `max_grid_bytes` still applies and `storage_dir` enables disk-backed coefficients.
+Rebuild prepared grids and datacubes after changing deposition: recoloring an old cube
+does not update its dust distribution.
+
 `Lbox` is in kpc when supplied without units. This uses the approximate visible RGB
 filters and the notebook's shared asinh stretch; it is not a calibrated true-color image.
 Choose `bands=('SDSS.i', 'SDSS.r', 'SDSS.g')` or Johnson I/V/B for false color.

@@ -11,6 +11,13 @@ sys.modules.setdefault(__name__ + '.units', utils.units)
 sys.modules.setdefault(__name__ + '.constants', utils.constants)
 sys.modules.setdefault(__name__ + '.visual', utils.visual)
 
+# resolve cached numba environments under either the installed or source package name
+_alternate_name = 'jabapy' if __name__ == 'jaba' else 'jaba'
+for _name, _module in tuple(sys.modules.items()):
+    if _name == __name__ or _name.startswith(__name__ + '.'):
+        sys.modules.setdefault(_alternate_name + _name[len(__name__):], _module)
+del _alternate_name, _name, _module
+
 __all__ = [
 	'physics',  # general physics analysis functions           -> mostly standalone, but can import some utils if needed (commonly used: units, constants)
 	'apps',      # applications of jaba to specific problems	-> can import anything

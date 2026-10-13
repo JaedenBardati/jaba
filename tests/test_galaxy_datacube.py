@@ -32,14 +32,16 @@ class TestGalaxyDatacube(unittest.TestCase):
                 group['Coordinates'] = [[-.2, 0, 0], [.2, 0, 0]]
                 group['Masses'] = [1., 1.]
                 group['Metallicity'] = [[.02], [.02]]
-                if part == 0: group['Dust_Temperature'] = [20., 30.]
+                if part == 0:
+                    group['Dust_Temperature'] = [20., 30.]
+                    group['SmoothingLength'] = [.45, .35]
                 else: group['StellarFormationTime'] = [8e8, 9e8]
         self.snap = GIZMO_Snapshot(path)
         table = (np.array([.01, .03]), np.array([0., 1e9]), np.array([900., 1e5, 1.1e7]), np.full((2, 2, 3), 2.))
         source = patch.object(resources, 'load_resource', return_value=table); source.start(); self.addCleanup(source.stop)
         fraction = patch.object(resources, '_BC03_current_mass_fraction', return_value=lambda pts: np.full(pts.shape[0], .5))
         fraction.start(); self.addCleanup(fraction.stop)
-        self.kw = dict(lam=[.1, 10, 1000]*u.micron, Lbox=1*u.kpc, grid_shape=4, npix=2, N_NGB=8, workers=1)
+        self.kw = dict(lam=[.1, 10, 1000]*u.micron, Lbox=1*u.kpc, grid_shape=4, npix=2, N_NGB=8, workers=1, dust_deposition='direct')
 
     def test_one_call_visual_image(self):
         import matplotlib.pyplot as plt
@@ -114,7 +116,7 @@ class TestGalaxyDatacube(unittest.TestCase):
             np.testing.assert_allclose(starts[..., 0], np.array([[-.25, .25], [-.25, .25]])*u.kpc.to(u.cm))
             np.testing.assert_allclose(starts[..., 1], np.array([[-.25, -.25], [.25, .25]])*u.kpc.to(u.cm))
             trace.reset_mock()
-            default = galaxy.raytrace_galaxy_datacube(prepared, npix=2, workers=1)
+            default = galaxy.raytrace_galaxy_datacube(prepared, npix=2, workers=1, supersampling=2)
             self.assertEqual(trace.call_count, 4)
         self.assertEqual(default['supersampling'], 2)
         self.assertEqual(single['supersampling'], 1)
@@ -123,6 +125,26 @@ class TestGalaxyDatacube(unittest.TestCase):
                 with self.assertRaises(ValueError): galaxy.galaxy_datacube(self.snap, supersampling=factor)
                 prepare.assert_not_called()
                 with self.assertRaises(ValueError): galaxy.raytrace_galaxy_datacube(prepared, supersampling=factor)
+
+    def test_default_kernel_spreads_dust_and_thermal_emission(self):
+
+        # conserve dust mass and thermal power while expanding support consistently in every layout
+        kwargs = {key: value for key, value in self.kw.items() if key not in ('npix', 'N_NGB', 'workers', 'dust_deposition')}
+        direct = galaxy.prepare_galaxy_datacube(self.snap, dust_deposition='direct', **kwargs)
+        dense = galaxy.prepare_galaxy_datacube(self.snap, storage='dense', **kwargs)
+        compact = galaxy.prepare_galaxy_datacube(self.snap, storage='compact', **kwargs)
+        self.assertEqual(dense['dust_deposition'], 'kernel')
+        self.assertGreater(np.count_nonzero(dense['dust_density']), np.count_nonzero(direct['dust_density']))
+        np.testing.assert_allclose(dense['dust_density'].sum(), direct['dust_density'].sum(), rtol=1e-13)
+        np.testing.assert_allclose(dense['emission'].sum(axis=0), direct['emission'].sum(axis=0), rtol=1e-13)
+        for key in ('dust_density', 'emission'):
+            np.testing.assert_allclose(compact[key][compact['field_indices']], dense[key], rtol=1e-13)
+            np.testing.assert_array_equal(compact[key][0], 0)
+        with tempfile.TemporaryDirectory() as directory:
+            disk = galaxy.prepare_galaxy_datacube(self.snap, storage='compact', storage_dir=directory, **kwargs)
+            for key in ('dust_density', 'emission'):
+                np.testing.assert_allclose(disk[key], compact[key])
+        with self.assertRaises(ValueError): galaxy.prepare_galaxy_datacube(self.snap, dust_deposition='invalid', **kwargs)
 
     def test_deposition_conservation_boundaries_and_exclusions(self):
         positions = np.array([[-.5, -.5, -.5], [-.1, 0, 0], [-.1, 0, 0], [.5, 0, 0], [-.5001, 0, 0], [.2, 0, 0]])
