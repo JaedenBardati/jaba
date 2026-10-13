@@ -23,10 +23,36 @@ def write_header(file):
 
 
 class TestGalaxyDatacube(unittest.TestCase):
+    def test_resume_skips_completed_wavelength_batches(self):
+        saved = {}; trace = galaxy.raytrace_galaxy_datacube
+        def checkpoint(first, last, rendered=None):
+            if rendered is None: return saved.get((first, last))
+            saved[first, last] = rendered
+        options = dict(self.kw, lam=np.geomspace(.1, 1000, 5)*u.micron, wavelength_batch_size=2,
+                       _batch_checkpoint=checkpoint)
+        calls = 0
+        def interrupted(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 2: raise RuntimeError('simulated interruption')
+            return trace(*args, **kwargs)
+        with patch.object(galaxy, 'raytrace_galaxy_datacube', side_effect=interrupted):
+            with self.assertRaises(RuntimeError): galaxy.galaxy_datacube(self.snap, **options)
+        self.assertEqual(list(saved), [(0, 2)])
+        with patch.object(galaxy, 'raytrace_galaxy_datacube', wraps=trace) as resumed:
+            result = galaxy.galaxy_datacube(self.snap, **options)
+            self.assertEqual(resumed.call_count, 2)
+        full = galaxy.galaxy_datacube(self.snap, **dict(options, _batch_checkpoint=None))
+        for name in full['datacubes']:
+            np.testing.assert_allclose(result['datacubes'][name], full['datacubes'][name], rtol=1e-12)
+        with patch.object(galaxy, 'prepare_galaxy_datacube', side_effect=AssertionError('recomputed completed batch')):
+            galaxy.galaxy_datacube(self.snap, **options)
+
     def test_stellar_kernel_conservation_and_compact_support(self):
         options = {key: value for key, value in self.kw.items() if key not in ('npix', 'N_NGB', 'workers')}
         options.update(dust_to_metal=0, grid_shape=8)
         direct = galaxy.prepare_galaxy_datacube(self.snap, **options)
+        options.pop('stellar_deposition')
         dense = galaxy.prepare_galaxy_datacube(self.snap, stellar_deposition='kernel', **options)
         compact = galaxy.prepare_galaxy_datacube(self.snap, stellar_deposition='kernel', storage='compact', **options)
         np.testing.assert_allclose(dense['emission'].sum(axis=0), direct['emission'].sum(axis=0), rtol=1e-14)
@@ -117,7 +143,7 @@ class TestGalaxyDatacube(unittest.TestCase):
         source = patch.object(resources, 'load_resource', return_value=table); source.start(); self.addCleanup(source.stop)
         fraction = patch.object(resources, '_BC03_current_mass_fraction', return_value=lambda pts: np.full(pts.shape[0], .5))
         fraction.start(); self.addCleanup(fraction.stop)
-        self.kw = dict(lam=[.1, 10, 1000]*u.micron, Lbox=1*u.kpc, grid_shape=4, npix=2, N_NGB=8, workers=1, dust_deposition='direct')
+        self.kw = dict(lam=[.1, 10, 1000]*u.micron, Lbox=1*u.kpc, grid_shape=4, npix=2, N_NGB=8, workers=1, dust_deposition='direct', stellar_deposition='direct')
 
     def test_one_call_visual_image(self):
         import matplotlib.pyplot as plt

@@ -1,7 +1,56 @@
 #!/usr/bin/env python3
 """Load, center and render a galaxy to an exact-size PNG and a floating-point RGB array."""
 import argparse
+import hashlib
+import json
+import os
+import tempfile
+import fcntl
 from pathlib import Path
+
+
+def _publish(path, writer):
+    """Publish a fully flushed new file without replacing an existing result."""
+    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name+'.partial-', delete=False) as file:
+        temporary = Path(file.name)
+        writer(file)
+        file.flush()
+        os.fsync(file.fileno())
+    os.link(temporary, path)
+    temporary.unlink()
+
+
+def _batch_checkpoint(directory, first, last, rendered=None):
+    """Store completed image-sized batches without pickled Python objects."""
+    import numpy as np
+    from jaba.utils import units as u
+    path = directory/f'batch-{first:05d}-{last:05d}.npz'
+    if rendered is None:
+        if not path.exists(): return None
+        with np.load(path, allow_pickle=False) as saved:
+            metadata = json.loads(str(saved['metadata']))
+            result = metadata['plain']
+            if 'grid_shape' in result: result['grid_shape'] = tuple(result['grid_shape'])
+            for key, unit in metadata['quantities'].items(): result[key] = saved[key]*u.Unit(unit)
+            for group, entries in metadata['groups'].items():
+                result[group] = {name: saved[group+'_'+name]*u.Unit(unit) if unit else saved[group+'_'+name].copy()
+                                 for name, unit in entries.items()}
+        return result
+
+    # retain units and geometry alongside the numerical arrays
+    arrays = {}; metadata = dict(plain={}, quantities={}, groups={})
+    for key, value in rendered.items():
+        if key in ('datacubes', 'optical_depth'):
+            metadata['groups'][key] = {}
+            for name, data in value.items():
+                arrays[key+'_'+name] = np.asarray(data)
+                metadata['groups'][key][name] = str(data.unit) if isinstance(data, u.Quantity) else None
+        elif isinstance(value, u.Quantity):
+            arrays[key] = value.value
+            metadata['quantities'][key] = str(value.unit)
+        else: metadata['plain'][key] = value
+    arrays['metadata'] = json.dumps(metadata, default=lambda value: value.item())
+    _publish(path, lambda file: np.savez(file, **arrays))
 
 
 def main(argv=None):
@@ -24,6 +73,9 @@ def main(argv=None):
     parser.add_argument('--wavelengths-nm', type=float, nargs='+', help='increasing wavelength samples; otherwise infer from RGB filters')
     parser.add_argument('--workers', type=int, default=-1)
     parser.add_argument('--quiet', action='store_true')
+    parser.add_argument('--restart-dir', type=Path, help='checkpoint directory; defaults to <output>.restart')
+    parser.add_argument('--resume', action='store_true', help='resume matching checkpoints and finish missing outputs')
+    parser.add_argument('--wavelength-batch-size', type=int, default=3, help='checkpoint after this many wavelengths; minimum 2')
     args = parser.parse_args(argv)
 
     # validate settings and refuse to overwrite existing outputs before loading the snapshot
@@ -41,35 +93,67 @@ def main(argv=None):
     if frequency_chunk_size < 1: parser.error('frequency-chunk-size must be positive.')
     prefix = args.output.expanduser() if args.output is not None else Path(args.filename.stem+'_rgb')
     png, raw = Path(str(prefix)+'.png'), Path(str(prefix)+'.npy')
-    if png.exists() or raw.exists(): parser.error('Output already exists; choose a new --output prefix.')
+    if not args.resume and (png.exists() or raw.exists()): parser.error('Output already exists; choose a new --output prefix or use --resume.')
     if args.wavelengths_nm is not None:
         wave = np.asarray(args.wavelengths_nm)
         if wave.size < 2 or np.any(~np.isfinite(wave)) or np.any(wave <= 0) or np.any(np.diff(wave) <= 0):
             parser.error('wavelengths-nm must contain at least two finite, positive, increasing values.')
 
-    # center in the snapshot frame and render without a plotting figure
+    # validate checkpoint identity and keep a process lock that releases automatically on failure
     import jaba
     from jaba.apps import galaxy
     from jaba.utils import units as u
     from matplotlib.image import imsave
-    if not args.quiet:
-        print(f'Image: {args.npix} x {args.npix}; grid: {grid_shape} cubed; spectral chunk: {frequency_chunk_size}', flush=True)
-    snap = jaba.load(str(args.filename.expanduser()))
-    snap.reset_transform()
-    snap.center_on(args.center_type)
-    if args.faceon_radius_kpc is not None: snap.faceon(args.faceon_radius_kpc*u.kpc)
-    spectral = {} if args.wavelengths_nm is None else dict(lam=wave*u.nm)
-    image = galaxy.galaxy_image(snap, Lbox=args.box_size*u.kpc, npix=args.npix, grid_shape=grid_shape,
-        frequency_chunk_size=frequency_chunk_size, max_grid_bytes=budget, wavelength_batch_size='auto',
-        component=args.component, step_fraction=args.step_fraction, supersampling=args.supersampling,
-        stellar_deposition=args.stellar_deposition, stellar_ngb=args.stellar_ngb,
-        dust_deposition=args.dust_deposition, workers=args.workers, log=not args.quiet, plot=False, **spectral)
+    if args.wavelength_batch_size < 2: parser.error('wavelength-batch-size must be at least 2.')
+    directory = args.restart_dir.expanduser() if args.restart_dir is not None else Path(str(prefix)+'.restart')
+    if args.resume and not directory.is_dir(): parser.error('No restart directory found.')
+    if not args.resume and directory.exists(): parser.error('Restart directory exists; use --resume or choose a new output prefix.')
+    directory.mkdir(parents=True, exist_ok=True)
+    lock = (directory/'run.lock').open('a')
+    with lock:
+        try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError: parser.error('Another process is using this restart directory.')
+        filename = args.filename.expanduser().resolve()
+        stat = filename.stat() if filename.exists() else None
+        settings = {key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()
+                    if key not in ('resume', 'quiet', 'restart_dir', 'output', 'filename')}
+        settings.update(filename=str(filename), output=str(prefix.resolve()),
+                        snapshot=None if stat is None else [stat.st_size, stat.st_mtime_ns],
+                        code=hashlib.sha256(Path(galaxy.__file__).read_bytes()+Path(__file__).read_bytes()+
+                            Path(galaxy.rad.__file__).read_bytes()+Path(jaba.utils.grid.__file__).read_bytes()).hexdigest())
+        manifest = directory/'settings.json'
+        if args.resume:
+            if not manifest.exists() or json.loads(manifest.read_text()) != settings:
+                parser.error('Restart settings, snapshot or code differ; use a new output/restart directory.')
+        else: _publish(manifest, lambda file: file.write(json.dumps(settings, sort_keys=True).encode()))
 
-    # write pixels directly without axes or resizing; preserve unquantized rgb with row zero at the bottom
-    prefix.parent.mkdir(parents=True, exist_ok=True)
-    with raw.open('xb') as file: np.save(file, image['rgb'], allow_pickle=False)
-    with png.open('xb') as file: imsave(file, image['rgb'], format='png', origin='lower', dpi=100)
-    if not args.quiet: print(f'Saved {png} and {raw}', flush=True)
+        # reuse a completed rgb image or render only unfinished wavelength batches
+        rgb_file = directory/'rgb.npy'
+        if rgb_file.exists():
+            rgb = np.load(rgb_file, allow_pickle=False)
+        else:
+            if not args.quiet:
+                print(f'Image: {args.npix} x {args.npix}; grid: {grid_shape} cubed; spectral chunk: {frequency_chunk_size}', flush=True)
+            snap = jaba.load(str(filename))
+            snap.reset_transform()
+            snap.center_on(args.center_type)
+            if args.faceon_radius_kpc is not None: snap.faceon(args.faceon_radius_kpc*u.kpc)
+            spectral = {} if args.wavelengths_nm is None else dict(lam=wave*u.nm)
+            image = galaxy.galaxy_image(snap, Lbox=args.box_size*u.kpc, npix=args.npix, grid_shape=grid_shape,
+                frequency_chunk_size=frequency_chunk_size, max_grid_bytes=budget,
+                wavelength_batch_size=min(args.wavelength_batch_size, max(2, capacity)),
+                _batch_checkpoint=lambda first, last, result=None: _batch_checkpoint(directory, first, last, result),
+                component=args.component, step_fraction=args.step_fraction, supersampling=args.supersampling,
+                stellar_deposition=args.stellar_deposition, stellar_ngb=args.stellar_ngb,
+                dust_deposition=args.dust_deposition, workers=args.workers, log=not args.quiet, plot=False, **spectral)
+            rgb = image['rgb']
+            _publish(rgb_file, lambda file: np.save(file, rgb, allow_pickle=False))
+
+        # publish exact-size pixels and unquantized rgb without replacing completed outputs
+        prefix.parent.mkdir(parents=True, exist_ok=True)
+        if not raw.exists(): _publish(raw, lambda file: np.save(file, rgb, allow_pickle=False))
+        if not png.exists(): _publish(png, lambda file: imsave(file, rgb, format='png', origin='lower', dpi=100))
+        if not args.quiet: print(f'Saved {png} and {raw}; restart files retained in {directory}', flush=True)
     return png, raw
 
 

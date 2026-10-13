@@ -171,6 +171,20 @@ The array retains the renderer's lower-origin convention; display it with `origi
 It contains stretched RGB, not physical spectral intensities. Existing output files
 are refused; choose a new prefix. Run with `--help` for all options.
 
+The script saves restart files in `<output>.restart` by default. After a failure, rerun
+the same command with `--resume`; completed wavelength batches are loaded instead of
+recomputed. `--restart-dir` selects another directory and `--wavelength-batch-size`
+sets the checkpoint interval (default 3 wavelengths, capped by the coefficient budget).
+The current unfinished batch must restart; particle loading, centering and preparation
+for unfinished batches are repeated. Final RGB is checkpointed before PNG/NPY export,
+so an export failure can resume without rendering. Files are published only after a
+successful write, and partial temporary files are ignored. Existing checkpoints and
+outputs are retained, never replaced. Settings, snapshot size/modification time and
+rendering source must match; use a new prefix after changing them. Resource tables
+must also remain unchanged. A process lock prevents simultaneous writers. Restart
+storage holds image-sized spectra for all three opacity cases, plus final RGB; allow
+disk space accordingly. It does not save full 3D coefficient grids.
+
 ### Running Simulations
 
 If you installed the relevant optional submodules, you can run the following command examples.

@@ -162,7 +162,7 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
                      chunk_size=250000, frequency_chunk_size=4, step_fraction=0.25, N_NGB=8,
                      workers=-1, query_chunk_size=4096, log=False, cache=True,
                      wavelength_range=None, n_wavelength=24, wavelength_spacing='log',
-                     storage='auto', storage_dir=None, max_grid_bytes=4*1024**3, inner_radius=0*u.kpc, backend='auto', return_optical_depth=True, supersampling=2, dust_deposition='kernel', wavelength_batch_size='auto', stellar_deposition='direct', stellar_ngb=32):
+                     storage='auto', storage_dir=None, max_grid_bytes=4*1024**3, inner_radius=0*u.kpc, backend='auto', return_optical_depth=True, supersampling=2, dust_deposition='kernel', wavelength_batch_size='auto', stellar_deposition='direct', stellar_ngb=32, _batch_checkpoint=None):
     """Trace intrinsic stellar populations and thermal MRN dust through a GIZMO galaxy toward +z.
 
     Lbox is the full physical image width; depth defaults to Lbox. center is relative to
@@ -246,7 +246,7 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
     elif wavelength_batch_size is not None and wavelength_batch_size != 'auto':
         batch_size = min(batch_size, wavelength_batch_size)
     if stellar_deposition not in ('direct', 'kernel'): raise ValueError("stellar_deposition must be 'direct' or 'kernel'.")
-    stellar_smoothing = _stellar_kernel_radii(snap, star_type, stellar_ngb, chunk_size, log) if stellar_deposition == 'kernel' else None
+    stellar_smoothing = None
     result = None
     for first in range(0, lam.size, batch_size):
         last = min(first+batch_size, lam.size)
@@ -255,18 +255,24 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
         batch_lam = lam[begin:last]
         if log and batch_size < lam.size:
             print(f'Galaxy wavelength batch: {first+1}–{last}/{lam.size}.', flush=True)
-        prepared = prepare_galaxy_datacube(snap, lam=batch_lam, Lbox=Lbox, depth=depth, center=center, grid_shape=grid_shape,
-            model=model, star_type=star_type, dust_to_metal=dust_to_metal, dust_temperature=dust_temperature,
-            dust_sublimation_temperature=dust_sublimation_temperature, stellar_mass_is_initial=stellar_mass_is_initial,
-            clip_population=clip_population, chunk_size=chunk_size, log=log, cache=cache,
-            wavelength_range=None, n_wavelength=n_wavelength, wavelength_spacing=wavelength_spacing,
-            frequency_chunk_size=frequency_chunk_size, storage=storage, storage_dir=storage_dir, max_grid_bytes=max_grid_bytes,
-            inner_radius=inner_radius, dust_deposition=dust_deposition, stellar_deposition=stellar_deposition,
-            stellar_ngb=stellar_ngb, _stellar_smoothing=stellar_smoothing)
-        rendered = raytrace_galaxy_datacube(prepared, npix=npix, frequency_chunk_size=frequency_chunk_size,
-            step_fraction=step_fraction, N_NGB=N_NGB, workers=workers, query_chunk_size=query_chunk_size, log=log,
-            backend=backend, return_optical_depth=return_optical_depth, supersampling=supersampling)
-        del prepared
+        rendered = None if _batch_checkpoint is None else _batch_checkpoint(first, last)
+        if rendered is None:
+            if stellar_deposition == 'kernel' and stellar_smoothing is None:
+                stellar_smoothing = _stellar_kernel_radii(snap, star_type, stellar_ngb, chunk_size, log)
+            prepared = prepare_galaxy_datacube(snap, lam=batch_lam, Lbox=Lbox, depth=depth, center=center, grid_shape=grid_shape,
+                model=model, star_type=star_type, dust_to_metal=dust_to_metal, dust_temperature=dust_temperature,
+                dust_sublimation_temperature=dust_sublimation_temperature, stellar_mass_is_initial=stellar_mass_is_initial,
+                clip_population=clip_population, chunk_size=chunk_size, log=log, cache=cache,
+                wavelength_range=None, n_wavelength=n_wavelength, wavelength_spacing=wavelength_spacing,
+                frequency_chunk_size=frequency_chunk_size, storage=storage, storage_dir=storage_dir, max_grid_bytes=max_grid_bytes,
+                inner_radius=inner_radius, dust_deposition=dust_deposition, stellar_deposition=stellar_deposition,
+                stellar_ngb=stellar_ngb, _stellar_smoothing=stellar_smoothing)
+            rendered = raytrace_galaxy_datacube(prepared, npix=npix, frequency_chunk_size=frequency_chunk_size,
+                step_fraction=step_fraction, N_NGB=N_NGB, workers=workers, query_chunk_size=query_chunk_size, log=log,
+                backend=backend, return_optical_depth=return_optical_depth, supersampling=supersampling)
+            del prepared
+            if _batch_checkpoint is not None: _batch_checkpoint(first, last, rendered)
+        elif log: print('Loaded completed wavelength batch from checkpoint.', flush=True)
         if batch_size == lam.size: return rendered
 
         # allocate final image-sized outputs once and release each batch before preparing the next
