@@ -66,6 +66,7 @@ Jaba is a personal research toolkit for astrophysical simulation analysis, prima
 
 - Commit each completed task after relevant tests pass. Stage only changes belonging to that feature; do not include unrelated pre-existing work. Report the commit hash and a brief summary to the user.
 - During ongoing work, after more than five commits since the last push and a few hours of work, ask whether to push to GitHub and summarize the unpushed changes. Do not push without authorization.
+- When you do a tiny correction commit and didn't push to Github yet, just ammend the commit instead to avoid commit bloat.
 
 ## Communication
 
@@ -87,7 +88,7 @@ Use this as a rough template for the development process when implementing a new
 
 5) **Clean up stage:** Remove temporary files, debugging statements, unused variables, obsolete code, and experimental implementations that are no longer needed. Avoid leaving unnecessary dependencies or configuration changes. Ensure that the final implementation is readable, maintainable, and consistent with the surrounding codebase. Do not delete unrelated files or user data.
 
-6) **Documentation stage:** Update `README.md`, `ai.md`, and other relevant documentation when changes are sufficiently significant. Document new functionality, interfaces, dependencies, configuration options, limitations, and important implementation decisions as appropriate. Keep documentation concise and consistent with the actual code. Allow the user to review documentation changes through the diff. You may also improve project instructions or documentation when doing so would meaningfully improve the efficiency or reliability of future development tasks.
+6) **Documentation stage:** Update `README.md`, `AGENTS.md`, and other relevant documentation when changes are sufficiently significant. Document new functionality, interfaces, dependencies, configuration options, limitations, and important implementation decisions as appropriate. Keep documentation concise and consistent with the actual code. Allow the user to review documentation changes through the diff. You may also improve project instructions or documentation when doing so would meaningfully improve the efficiency or reliability of future development tasks.
 
 7) **Review stage:** Review the final diff for unintended modifications, regressions, unnecessary complexity, and opportunities for simplification. Run relevant tests and benchmarks one final time. Summarize what changed, the tests performed and their results, any measured performance improvements, and any remaining limitations. Clearly distinguish between verified results and untested assumptions. Do not claim that tests passed or performance improved without having verified them. Commit git changes or push to Github when relevant.
 

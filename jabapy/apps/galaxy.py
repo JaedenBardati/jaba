@@ -15,7 +15,7 @@ from ..utils.grid import CartesianGrid, bin_particles_direct, bin_particles_kern
 
 def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effective',
                  percentile=99.5, stretch=0.03, ax=None, title=None, datacube=None,
-                 cache=True, plot=True, **datacube_kwargs):
+                 cache=True, plot=True, _inner_percent_of_pixel_removed=10.0, **datacube_kwargs):
     """Render a galaxy RGB image in one call, using the notebook's shared asinh stretch.
 
     Pass a snapshot and any galaxy_datacube options (npix, grid_shape, Lbox, inner_radius,
@@ -28,7 +28,7 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
     If npix is supplied without grid_shape, the grid uses npix cells along each axis.
     supersampling=2 averages a 2 by 2 ray pattern per pixel before the RGB stretch;
     use supersampling=1 for the original single-ray sampling. Output size remains npix.
-    inner_radius defaults to 0.05*Lbox/npix (5% of a pixel width); pass zero to disable it.
+    inner_radius defaults to 0.1*Lbox/npix (10% of a pixel width); pass zero to disable it.
     Alternatively pass datacube=the result of galaxy_datacube or raytrace_galaxy_datacube
     to recolor a cube without another calculation; do not also supply snapshot/RT options.
 
@@ -72,7 +72,7 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
                 datacube_kwargs['lam'] = np.unique(np.concatenate(samples))*u.nm
         if 'npix' in datacube_kwargs: datacube_kwargs.setdefault('grid_shape', datacube_kwargs['npix'])
         if 'inner_radius' not in datacube_kwargs:
-            datacube_kwargs['inner_radius'] = 0.05*u.Quantity(datacube_kwargs.get('Lbox', 10), u.kpc)/datacube_kwargs.get('npix', 64)
+            datacube_kwargs['inner_radius'] = 0.01*_inner_percent_of_pixel_removed*u.Quantity(datacube_kwargs.get('Lbox', 10), u.kpc)/datacube_kwargs.get('npix', 64)
         datacube_kwargs.setdefault('n_wavelength', 128)
         datacube_kwargs.setdefault('wavelength_spacing', 'linear')
         datacube_kwargs.setdefault('return_optical_depth', False)
@@ -162,7 +162,9 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
                      chunk_size=250000, frequency_chunk_size=4, step_fraction=0.25, N_NGB=8,
                      workers=-1, query_chunk_size=4096, log=False, cache=True,
                      wavelength_range=None, n_wavelength=24, wavelength_spacing='log',
-                     storage='auto', storage_dir=None, max_grid_bytes=4*1024**3, inner_radius=0*u.kpc, backend='auto', return_optical_depth=True, supersampling=2, dust_deposition='kernel', wavelength_batch_size='auto', stellar_deposition='direct', stellar_ngb=32, _batch_checkpoint=None):
+                     storage='auto', storage_dir=None, max_grid_bytes=4*1024**3, inner_radius=0*u.kpc,
+                     backend='auto', return_optical_depth=True, supersampling=1, dust_deposition='kernel',
+                     wavelength_batch_size='auto', stellar_deposition='kernel', stellar_ngb=32, _batch_checkpoint=None):
     """Trace intrinsic stellar populations and thermal MRN dust through a GIZMO galaxy toward +z.
 
     Lbox is the full physical image width; depth defaults to Lbox. center is relative to
@@ -171,11 +173,12 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
     from center (bare numbers mean kpc; default zero). This cuts particles before gridding;
     interpolation can smooth the edge of the excluded region.
     Data come from the snapshot accessors in its current units and frame.
-    Stellar luminosity defaults to direct binning. stellar_deposition='kernel' instead
-    conserves luminosity while spreading it with a cubic kernel whose support is the
+    Stellar luminosity defaults to stellar_deposition='kernel', conserving luminosity
+    while spreading it with a cubic kernel whose support is the
     distance to the stellar_ngb-th other real star (default 32). Neighbours include stars
     outside the rendering box and inner exclusion, but exclude wind particles. With fewer
     stars, use the furthest available neighbour; an isolated star uses direct deposition.
+    Use stellar_deposition='direct' for single-cell stellar binning.
     Radii are computed once per call and reused across wavelength batches. This smooths
     compact stellar structure and can expand compact-grid occupancy. By default dust_deposition='kernel' spreads
     gas dust mass and thermal emission with the compact cubic kernel using snap.smooth[0]
@@ -220,7 +223,7 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
     raytrace_galaxy_datacube to change npix or integration settings without rereading data.
     backend='auto' uses parallel compiled transfer; 'numpy' selects the reference tracer.
     return_optical_depth=False omits optical-depth cubes to reduce output memory.
-    supersampling is a positive integer (default 2), tracing its square in uniformly
+    supersampling is a positive integer (default 1), tracing its square in uniformly
     spaced subpixel rays and averaging linear intensities. npix and pixel_area describe
     the final pixels. Returned optical depths are mean ray depths for diagnostics,
     not effective depths computed from mean transmission. Use 1 for single-ray sampling.
@@ -298,7 +301,8 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
                             dust_temperature=None, dust_sublimation_temperature=1500*u.K,
                             stellar_mass_is_initial=False, clip_population=True, chunk_size=250000,
                             log=False, cache=True, wavelength_range=None, n_wavelength=24, wavelength_spacing='log',
-                            frequency_chunk_size=4, storage='auto', storage_dir=None, max_grid_bytes=4*1024**3, inner_radius=0*u.kpc, dust_deposition='kernel', stellar_deposition='direct', stellar_ngb=32,
+                            frequency_chunk_size=4, storage='auto', storage_dir=None, max_grid_bytes=4*1024**3,
+                            inner_radius=0*u.kpc, dust_deposition='kernel', stellar_deposition='kernel', stellar_ngb=32,
                             _stellar_smoothing=None):
     """Read a GIZMO snapshot and prepare reusable stellar and dust coefficients.
 
@@ -332,7 +336,7 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
     storage and preparation time; the same memory budget checks and disk storage apply.
     'direct' reproduces the former single-cell gas deposition. stellar_deposition='kernel'
     enables the optional luminosity-conserving stellar smoothing described above;
-    stellar_ngb defaults to 32. Stellar deposition defaults to 'direct'.
+    stellar_ngb defaults to 32. Stellar deposition defaults to 'kernel'.
     """
 
     # validate the physical image and wavelength grids
@@ -536,7 +540,8 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
 
 
 def raytrace_galaxy_datacube(prepared, npix=64, frequency_chunk_size=4, step_fraction=0.25,
-                             N_NGB=8, workers=-1, query_chunk_size=4096, log=False, backend='auto', return_optical_depth=True, supersampling=2):
+                             N_NGB=8, workers=-1, query_chunk_size=4096, log=False, backend='auto',
+                             return_optical_depth=True, supersampling=1):
     """Render a prepared galaxy without reading its snapshot or rebuilding its spectra.
 
     prepared is the dictionary returned by prepare_galaxy_datacube. npix and integration

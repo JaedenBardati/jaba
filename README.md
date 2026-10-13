@@ -85,7 +85,7 @@ image = galaxy.galaxy_image(snap, Lbox=10, grid_shape=128, npix=512, workers=-1,
 image['figure'].savefig('galaxy_rgb.png')
 ```
 
-Galaxy images and datacubes default to `supersampling=2`: four uniformly spaced rays
+Galaxy images and datacubes default to `supersampling=1`. Use `supersampling=2` for four uniformly spaced rays
 per output pixel, averaged in linear intensity before the RGB stretch. Use
 `supersampling=1` for the original single-ray sampling. `npix` remains the final image
 size and `grid_shape` is unchanged. Ray work grows approximately as the factor squared;
@@ -96,8 +96,8 @@ Dust defaults to `dust_deposition='kernel'`: gas dust mass and thermal emission 
 spread over neighboring cells with a compact cubic kernel using the snapshot's gas
 smoothing lengths. The discrete cell-center weights conserve each selected particle's
 mass and luminosity. Kernels too small to reach any cell center use the containing cell;
-no arbitrary minimum smoothing radius is added. Stars retain direct deposition.
-To smooth stellar emission as well, pass `stellar_deposition='kernel', stellar_ngb=32`.
+no arbitrary minimum smoothing radius is added. Stars also default to kernel deposition.
+Stellar smoothing is controlled by `stellar_deposition='kernel', stellar_ngb=32`.
 Each star's cubic-kernel support radius is its distance to the 32nd other real star;
 wind particles are excluded. Neighbours come from the full snapshot, including outside
 the image box, while only selected stars deposit luminosity. Fewer neighbours use the
@@ -105,7 +105,7 @@ furthest available star; an isolated star deposits directly. Kernel weights cons
 luminosity at each wavelength and renormalize at box boundaries. Radii are computed
 once per datacube call and reused across wavelength batches. This can blur compact
 clusters, increase occupied grid cells and add preparation time; direct stellar
-deposition remains the default.
+deposition is available with `stellar_deposition='direct'`.
 Particle centers select the box and central exclusion; kernels clipped by the box are
 renormalized inside it. Use `dust_deposition='direct'` to reproduce the former behavior.
 Kernel support expands compact occupancy and can require more memory and preparation
@@ -145,7 +145,7 @@ to save without showing; the saved figure is closed, including a supplied `ax`'s
 `plot=True` is the default and keeps the figure open for notebook display.
 Pass `ax=` to draw into an existing subplot. When `npix` is supplied without
 `grid_shape`, the grid uses `npix` cells along each axis; an explicit `grid_shape` wins.
-The default `inner_radius` is 5% of a pixel width (`0.05 * Lbox / npix`);
+The default `inner_radius` is 10% of a pixel width (`0.1 * Lbox / npix`);
 pass `inner_radius=0` to disable the central particle cutoff.
 
 ### Quick galaxy images
@@ -163,7 +163,7 @@ spectral chunks are capped at 24 at a 128-cubed grid and 3 at 512-cubed; automat
 wavelength batching also bounds live coefficients. Use `--grid-shape`,
 `--frequency-chunk-size` and `--max-grid-gib` to override these settings.
 The tool uses filter-derived RGB wavelengths unless `--wavelengths-nm` is supplied.
-Use `--stellar-deposition kernel --stellar-ngb 32` for optional stellar smoothing.
+The CLI retains direct stellar deposition by default; use `--stellar-deposition kernel --stellar-ngb 32` for stellar smoothing.
 
 Outputs are `galaxy_334.png` (exactly `npix` by `npix`, without axes or margins) and
 `galaxy_334.npy` (unquantized display RGB, shape `(npix, npix, 3)`, values in `[0, 1]`).
