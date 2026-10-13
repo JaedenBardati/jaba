@@ -100,7 +100,18 @@ no arbitrary minimum smoothing radius is added. Stars retain direct deposition.
 Particle centers select the box and central exclusion; kernels clipped by the box are
 renormalized inside it. Use `dust_deposition='direct'` to reproduce the former behavior.
 Kernel support expands compact occupancy and can require more memory and preparation
-time; `max_grid_bytes` still applies and `storage_dir` enables disk-backed coefficients.
+time. One-call `galaxy_image` and `galaxy_datacube` now default to
+`wavelength_batch_size='auto'`: when dense full-spectrum coefficients exceed
+`max_grid_bytes`, they prepare, trace and release wavelength batches, assembling only
+the final image-sized spectra. A `512**3` grid with the default 4 GiB coefficient budget
+uses at most three wavelengths plus dust density at a time (4 GiB), instead of keeping
+all 128 image wavelengths in the grid. Snapshot caches, final cubes and processing
+temporaries require additional RAM. This repeats particle processing and ray queries,
+so it trades runtime for memory without changing deposition or wavelength sampling.
+Set an integer batch size >= 2 to control it, or `None` to disable it.
+`prepare_galaxy_datacube` still retains all wavelengths for reusable preparations.
+An explicit `storage_dir` enables disk-backed coefficients and disables automatic
+batching; `max_grid_bytes` continues to apply to arrays kept in RAM.
 Rebuild prepared grids and datacubes after changing deposition: recoloring an old cube
 does not update its dust distribution.
 

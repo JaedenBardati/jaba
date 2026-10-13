@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import weakref
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -22,6 +23,50 @@ def write_header(file):
 
 
 class TestGalaxyDatacube(unittest.TestCase):
+    def test_wavelength_batches_match_full_kernel_transfer(self):
+
+        # compare all transfer cases, both backends, supersampling and an odd final batch
+        options = dict(self.kw, lam=np.geomspace(.1, 1000, 5)*u.micron,
+                       dust_deposition='kernel', supersampling=2)
+        for backend in ('numpy', 'numba'):
+            for storage in ('dense', 'compact'):
+                with self.subTest(backend=backend, storage=storage):
+                    full = galaxy.galaxy_datacube(self.snap, backend=backend, storage=storage,
+                                                 wavelength_batch_size=None, **options)
+                    batched = galaxy.galaxy_datacube(self.snap, backend=backend, storage=storage,
+                                                    wavelength_batch_size=2, **options)
+                    self.assertEqual(full['particle_counts'], batched['particle_counts'])
+                    np.testing.assert_array_equal(full['wavelength'], batched['wavelength'])
+                    for key in ('datacubes', 'optical_depth'):
+                        for name in full[key]:
+                            np.testing.assert_allclose(full[key][name], batched[key][name], rtol=1e-12, atol=0)
+
+    def test_automatic_batches_respect_budget_and_release_grids(self):
+        prepare = galaxy.prepare_galaxy_datacube
+        previous = []; sizes = []
+
+        # ensure the next allocation cannot overlap the previous coefficient grids
+        def checked_prepare(*args, **kwargs):
+            self.assertTrue(all(ref() is None for ref in previous))
+            prepared = prepare(*args, **kwargs)
+            self.assertLessEqual(prepared['coefficient_bytes'], 3*4**3*8)
+            sizes.append(prepared['wavelength'].size)
+            previous[:] = [weakref.ref(prepared[key]) for key in ('emission', 'dust_density')]
+            return prepared
+        options = dict(self.kw, dust_deposition='kernel', return_optical_depth=False)
+        del options['lam']
+        with patch.object(galaxy, 'prepare_galaxy_datacube', side_effect=checked_prepare):
+            result = galaxy.galaxy_datacube(self.snap, n_wavelength=5, max_grid_bytes=3*4**3*8, **options)
+        self.assertEqual(sizes, [2, 2, 2])
+        self.assertTrue(all(ref() is None for ref in previous))
+        self.assertNotIn('optical_depth', result)
+        self.assertEqual(result['datacubes']['effective'].shape, (2, 2, 5))
+
+    def test_invalid_wavelength_batch_size(self):
+        for size in (0, 1, True, 2.5, 'invalid'):
+            with self.subTest(size=size), self.assertRaises(ValueError):
+                galaxy.galaxy_datacube(self.snap, wavelength_batch_size=size, **self.kw)
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory(); self.addCleanup(directory.cleanup)
         path = Path(directory.name)/'snapshot.hdf5'

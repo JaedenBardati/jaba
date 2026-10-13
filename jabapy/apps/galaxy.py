@@ -100,6 +100,26 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
     return result
 
 
+def _galaxy_wavelengths(lam, wavelength_range, n_wavelength, wavelength_spacing):
+    """Validate a shared rest-frame wavelength grid for preparation and batching."""
+    if lam is not None and wavelength_range is not None:
+        raise ValueError('Supply explicit lam samples or wavelength_range, not both.')
+    if lam is None:
+        limits = u.Quantity([0.1, 1000] if wavelength_range is None else wavelength_range, u.micron).to_value(u.micron)
+        if limits.shape != (2,) or np.any(~np.isfinite(limits)) or not 0 < limits[0] < limits[1]:
+            raise ValueError('wavelength_range must contain two finite, positive, increasing limits.')
+        if int(n_wavelength) != n_wavelength or n_wavelength < 2 or wavelength_spacing not in ('log', 'linear'):
+            raise ValueError("Use n_wavelength >= 2 and wavelength_spacing='log' or 'linear'.")
+        sample = np.geomspace if wavelength_spacing == 'log' else np.linspace
+        lam = sample(*limits, int(n_wavelength))*u.micron
+    else:
+        lam = u.Quantity(lam, u.micron)
+    wave = np.asarray(lam.to_value(u.AA))
+    if wave.ndim != 1 or wave.size < 2 or np.any(~np.isfinite(wave)) or np.any(np.diff(wave) <= 0) or wave[0] <= 0:
+        raise ValueError('lam must be an increasing one-dimensional wavelength grid with at least two samples.')
+    return lam
+
+
 def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix=64, grid_shape=64,
                      model='BC03_miles_chabrier', star_type=4, dust_to_metal=0.5,
                      dust_temperature=None, dust_sublimation_temperature=1500*u.K,
@@ -107,7 +127,7 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
                      chunk_size=250000, frequency_chunk_size=4, step_fraction=0.25, N_NGB=8,
                      workers=-1, query_chunk_size=4096, log=False, cache=True,
                      wavelength_range=None, n_wavelength=24, wavelength_spacing='log',
-                     storage='auto', storage_dir=None, max_grid_bytes=4*1024**3, inner_radius=0*u.kpc, backend='auto', return_optical_depth=True, supersampling=2, dust_deposition='kernel'):
+                     storage='auto', storage_dir=None, max_grid_bytes=4*1024**3, inner_radius=0*u.kpc, backend='auto', return_optical_depth=True, supersampling=2, dust_deposition='kernel', wavelength_batch_size='auto'):
     """Trace intrinsic stellar populations and thermal MRN dust through a GIZMO galaxy toward +z.
 
     Lbox is the full physical image width; depth defaults to Lbox. center is relative to
@@ -147,6 +167,14 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
     The snapshot may cache full input fields in RAM; chunk_size does not bound that cache.
     storage, storage_dir and max_grid_bytes select coefficient storage as described in
     prepare_galaxy_datacube; frequency_chunk_size also bounds preparation temporaries.
+    wavelength_batch_size='auto' limits live coefficients to max_grid_bytes by preparing,
+    tracing and releasing wavelength batches when a dense full spectrum would exceed it.
+    This preserves the spectrum and spatial deposition, but repeats particle processing
+    and ray queries. Final image cubes, snapshot caches and work arrays are additional RAM.
+    An integer >= 2 sets the batch size; None disables batching. Explicit storage_dir
+    keeps automatic batching disabled so disk-backed full spectra remain available.
+    If even two dense channels do not fit, preparation tries the normal compact layout
+    and enforces its budget. Explicit prepare_galaxy_datacube still retains all channels.
     For repeated renders, call prepare_galaxy_datacube once and reuse its result with
     raytrace_galaxy_datacube to change npix or integration settings without rereading data.
     backend='auto' uses parallel compiled transfer; 'numpy' selects the reference tracer.
@@ -160,16 +188,59 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
     if int(npix) != npix or npix < 1: raise ValueError('npix must be a positive integer.')
     if isinstance(supersampling, bool) or not isinstance(supersampling, (int, np.integer)) or supersampling < 1:
         raise ValueError('supersampling must be a positive integer.')
-    prepared = prepare_galaxy_datacube(snap, lam=lam, Lbox=Lbox, depth=depth, center=center, grid_shape=grid_shape,
-        model=model, star_type=star_type, dust_to_metal=dust_to_metal, dust_temperature=dust_temperature,
-        dust_sublimation_temperature=dust_sublimation_temperature, stellar_mass_is_initial=stellar_mass_is_initial,
-        clip_population=clip_population, chunk_size=chunk_size, log=log, cache=cache,
-        wavelength_range=wavelength_range, n_wavelength=n_wavelength, wavelength_spacing=wavelength_spacing,
-        frequency_chunk_size=frequency_chunk_size, storage=storage, storage_dir=storage_dir, max_grid_bytes=max_grid_bytes,
-        inner_radius=inner_radius, dust_deposition=dust_deposition)
-    return raytrace_galaxy_datacube(prepared, npix=npix, frequency_chunk_size=frequency_chunk_size,
-        step_fraction=step_fraction, N_NGB=N_NGB, workers=workers, query_chunk_size=query_chunk_size, log=log,
-        backend=backend, return_optical_depth=return_optical_depth, supersampling=supersampling)
+
+    # bound live coefficient grids by tracing independent wavelength batches
+    lam = _galaxy_wavelengths(lam, wavelength_range, n_wavelength, wavelength_spacing)
+    if wavelength_batch_size != 'auto' and wavelength_batch_size is not None:
+        if isinstance(wavelength_batch_size, bool) or not isinstance(wavelength_batch_size, (int, np.integer)) or wavelength_batch_size < 2:
+            raise ValueError('wavelength_batch_size must be auto, None or an integer >= 2.')
+    batch_size = lam.size
+    if wavelength_batch_size == 'auto' and storage_dir is None and max_grid_bytes is not None and max_grid_bytes > 0:
+        cells = int(np.prod(np.broadcast_to(np.asarray(grid_shape, dtype=int), (3,))))
+        if cells > 0:
+            index_bytes = cells*(4 if cells < np.iinfo(np.int32).max else 8) if storage == 'compact' else 0
+            rows = cells+1 if storage == 'compact' else cells
+            capacity = int((max_grid_bytes-index_bytes)//(8*rows))-1
+            if capacity >= 2: batch_size = min(batch_size, capacity)
+    elif wavelength_batch_size is not None and wavelength_batch_size != 'auto':
+        batch_size = min(batch_size, wavelength_batch_size)
+    result = None
+    for first in range(0, lam.size, batch_size):
+        last = min(first+batch_size, lam.size)
+        # overlap the final singleton to retain the preparation API's two-sample minimum
+        begin = first if last-first > 1 else first-1
+        batch_lam = lam[begin:last]
+        if log and batch_size < lam.size:
+            print(f'Galaxy wavelength batch: {first+1}–{last}/{lam.size}.', flush=True)
+        prepared = prepare_galaxy_datacube(snap, lam=batch_lam, Lbox=Lbox, depth=depth, center=center, grid_shape=grid_shape,
+            model=model, star_type=star_type, dust_to_metal=dust_to_metal, dust_temperature=dust_temperature,
+            dust_sublimation_temperature=dust_sublimation_temperature, stellar_mass_is_initial=stellar_mass_is_initial,
+            clip_population=clip_population, chunk_size=chunk_size, log=log, cache=cache,
+            wavelength_range=None, n_wavelength=n_wavelength, wavelength_spacing=wavelength_spacing,
+            frequency_chunk_size=frequency_chunk_size, storage=storage, storage_dir=storage_dir, max_grid_bytes=max_grid_bytes,
+            inner_radius=inner_radius, dust_deposition=dust_deposition)
+        rendered = raytrace_galaxy_datacube(prepared, npix=npix, frequency_chunk_size=frequency_chunk_size,
+            step_fraction=step_fraction, N_NGB=N_NGB, workers=workers, query_chunk_size=query_chunk_size, log=log,
+            backend=backend, return_optical_depth=return_optical_depth, supersampling=supersampling)
+        del prepared
+        if batch_size == lam.size: return rendered
+
+        # allocate final image-sized outputs once and release each batch before preparing the next
+        if result is None:
+            result = {key: value for key, value in rendered.items() if key not in ('datacubes', 'optical_depth')}
+            result['wavelength'] = lam
+            for key in ('datacubes', 'optical_depth'):
+                if key in rendered:
+                    result[key] = {}
+                    for name, values in rendered[key].items():
+                        output = np.empty(values.shape[:-1]+(lam.size,))
+                        result[key][name] = u.Quantity(output, values.unit, copy=False) if isinstance(values, u.Quantity) else output
+            del values
+        for key in ('datacubes', 'optical_depth'):
+            if key in rendered:
+                for name in rendered[key]: result[key][name][..., first:last] = rendered[key][name][..., first-begin:]
+        del rendered
+    return result
 
 
 def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, grid_shape=64,
@@ -212,21 +283,8 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
     """
 
     # validate the physical image and wavelength grids
-    if lam is not None and wavelength_range is not None:
-        raise ValueError('Supply explicit lam samples or wavelength_range, not both.')
-    if lam is None:
-        limits = u.Quantity([0.1, 1000] if wavelength_range is None else wavelength_range, u.micron).to_value(u.micron)
-        if limits.shape != (2,) or np.any(~np.isfinite(limits)) or not 0 < limits[0] < limits[1]:
-            raise ValueError('wavelength_range must contain two finite, positive, increasing limits.')
-        if int(n_wavelength) != n_wavelength or n_wavelength < 2 or wavelength_spacing not in ('log', 'linear'):
-            raise ValueError("Use n_wavelength >= 2 and wavelength_spacing='log' or 'linear'.")
-        sample = np.geomspace if wavelength_spacing == 'log' else np.linspace
-        lam = sample(*limits, int(n_wavelength))*u.micron
-    else:
-        lam = u.Quantity(lam, u.micron)
+    lam = _galaxy_wavelengths(lam, wavelength_range, n_wavelength, wavelength_spacing)
     wave = np.asarray(lam.to_value(u.AA))
-    if wave.ndim != 1 or wave.size < 2 or np.any(~np.isfinite(wave)) or np.any(np.diff(wave) <= 0) or wave[0] <= 0:
-        raise ValueError('lam must be an increasing one-dimensional wavelength grid with at least two samples.')
     Lbox = u.Quantity(Lbox, u.kpc).to_value(u.cm)
     depth = Lbox if depth is None else u.Quantity(depth, u.kpc).to_value(u.cm)
     center = np.zeros(3) if center is None else u.Quantity(center, u.kpc).to_value(u.cm)
