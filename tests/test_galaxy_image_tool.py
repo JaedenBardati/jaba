@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -38,12 +39,30 @@ class TestGalaxyImageTool(unittest.TestCase):
             args = ['snapshot.hdf5', '--npix', '2', '--output', str(Path(directory)/'image'), '--quiet']
             with patch('matplotlib.image.imsave', side_effect=RuntimeError('interrupted export')):
                 with self.assertRaises(RuntimeError): tool.main(args)
+            restart = Path(directory)/'image.restart'
+            self.assertTrue((restart/'rgb.npy').exists())
+            with self.assertRaises(SystemExit): tool.main(args+['--resume', '--box-size', '30'])
             render.reset_mock()
             png, raw = tool.main(args+['--resume'])
             render.assert_not_called()
             self.assertTrue(png.exists())
             np.testing.assert_array_equal(np.load(raw), rgb)
-            with self.assertRaises(SystemExit): tool.main(args+['--resume', '--box-size', '30'])
+            self.assertFalse(restart.exists())
+
+    def test_keep_restart(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(jabapy, 'load'), patch.object(galaxy, 'galaxy_image', return_value={'rgb': np.zeros((2, 2, 3))}):
+            args = ['snapshot.hdf5', '--npix', '2', '--output', str(Path(directory)/'image'), '--quiet', '--keep-restart']
+            tool.main(args)
+            restart = Path(directory)/'image.restart'
+            self.assertTrue((restart/'rgb.npy').exists())
+            manifest = restart/'settings.json'
+            saved = json.loads(manifest.read_text())
+            saved['code'] = sorted(tool._LEGACY_RESTART_CODES)[0]
+            manifest.write_text(json.dumps(saved))
+            (restart/'notes.txt').write_text('preserve unrelated files')
+            tool.main(args[:-1]+['--resume'])
+            self.assertEqual((restart/'notes.txt').read_text(), 'preserve unrelated files')
+            self.assertFalse((restart/'settings.json').exists())
 
     def test_output_pixels_array_and_transform_order(self):
         rgb = np.array([[[1., 0., 0.], [.1, .2, .3]], [[0., 1., 0.], [0., 0., 1.]]])

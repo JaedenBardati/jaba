@@ -178,8 +178,9 @@ sets the checkpoint interval (default 3 wavelengths, capped by the coefficient b
 The current unfinished batch must restart; particle loading, centering and preparation
 for unfinished batches are repeated. Final RGB is checkpointed before PNG/NPY export,
 so an export failure can resume without rendering. Files are published only after a
-successful write, and partial temporary files are ignored. Existing checkpoints and
-outputs are retained, never replaced. Settings, snapshot size/modification time and
+successful write, and partial temporary files are ignored. On failure, completed checkpoints and outputs are retained. After both outputs are
+successfully exported, restart files are removed by default; use `--keep-restart`
+to retain them. Existing output files are never replaced. Settings, snapshot size/modification time and
 rendering source must match; use a new prefix after changing them. Resource tables
 must also remain unchanged. A process lock prevents simultaneous writers. Restart
 storage holds image-sized spectra for all three opacity cases, plus final RGB; allow

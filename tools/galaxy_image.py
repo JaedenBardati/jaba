@@ -9,6 +9,12 @@ import fcntl
 from pathlib import Path
 
 
+# these legacy checkpoints were verified to differ only in documentation and export cleanup
+_LEGACY_RESTART_CODES = {'0c9c21c611382a5514531033595097b0c3408a8e7a9bdf623ee1114db38fd385',
+                         '2d3b2fa6c62b9697b7f376b3162fa97d4f191294b747e3a7e88dd1a74eb81703'}
+_LEGACY_RENDER_CODE = '791a91b44d585dec70b91665b1202e74538790c7e850bae7a04f5a098c5c1b60'
+
+
 def _publish(path, writer):
     """Publish a fully flushed new file without replacing an existing result."""
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name+'.partial-', delete=False) as file:
@@ -74,6 +80,7 @@ def main(argv=None):
     parser.add_argument('--workers', type=int, default=-1)
     parser.add_argument('--quiet', action='store_true')
     parser.add_argument('--restart-dir', type=Path, help='checkpoint directory; defaults to <output>.restart')
+    parser.add_argument('--keep-restart', action='store_true', help='retain checkpoints after successful output export')
     parser.add_argument('--resume', action='store_true', help='resume matching checkpoints and finish missing outputs')
     parser.add_argument('--wavelength-batch-size', type=int, default=3, help='checkpoint after this many wavelengths; minimum 2')
     args = parser.parse_args(argv)
@@ -116,15 +123,21 @@ def main(argv=None):
         filename = args.filename.expanduser().resolve()
         stat = filename.stat() if filename.exists() else None
         settings = {key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()
-                    if key not in ('resume', 'quiet', 'restart_dir', 'output', 'filename')}
+                    if key not in ('resume', 'quiet', 'restart_dir', 'output', 'filename', 'keep_restart')}
         settings.update(filename=str(filename), output=str(prefix.resolve()),
                         snapshot=None if stat is None else [stat.st_size, stat.st_mtime_ns],
                         code=hashlib.sha256(Path(galaxy.__file__).read_bytes()+Path(__file__).read_bytes()+
                             Path(galaxy.rad.__file__).read_bytes()+Path(jaba.utils.grid.__file__).read_bytes()).hexdigest())
         manifest = directory/'settings.json'
         if args.resume:
-            if not manifest.exists() or json.loads(manifest.read_text()) != settings:
-                parser.error('Restart settings, snapshot or code differ; use a new output/restart directory.')
+            saved = json.loads(manifest.read_text()) if manifest.exists() else {}
+            render_code = hashlib.sha256(Path(galaxy.__file__).read_bytes()+Path(galaxy.rad.__file__).read_bytes()+
+                                         Path(jaba.utils.grid.__file__).read_bytes()).hexdigest()
+            if saved.get('code') in _LEGACY_RESTART_CODES and render_code == _LEGACY_RENDER_CODE:
+                saved['code'] = settings['code']
+            differences = sorted(key for key in saved.keys() | settings.keys() if saved.get(key) != settings.get(key))
+            if differences:
+                parser.error('Restart mismatch in '+', '.join(differences)+'; use a new output/restart directory.')
         else: _publish(manifest, lambda file: file.write(json.dumps(settings, sort_keys=True).encode()))
 
         # reuse a completed rgb image or render only unfinished wavelength batches
@@ -153,7 +166,16 @@ def main(argv=None):
         prefix.parent.mkdir(parents=True, exist_ok=True)
         if not raw.exists(): _publish(raw, lambda file: np.save(file, rgb, allow_pickle=False))
         if not png.exists(): _publish(png, lambda file: imsave(file, rgb, format='png', origin='lower', dpi=100))
-        if not args.quiet: print(f'Saved {png} and {raw}; restart files retained in {directory}', flush=True)
+        # remove only this tool's restart files after both output writes succeed
+        if not args.keep_restart:
+            for path in directory.iterdir():
+                name = path.name
+                owned = name in ('settings.json', 'rgb.npy', 'run.lock') or (name.startswith('batch-') and name.endswith('.npz'))
+                partial = '.partial-' in name and (name.startswith(('settings.json.partial-', 'rgb.npy.partial-')) or name.startswith('batch-'))
+                if path.is_file() and (owned or partial): path.unlink()
+            if not directory.is_symlink() and not any(directory.iterdir()): directory.rmdir()
+        if not args.quiet:
+            print(f'Saved {png} and {raw}; restart files '+('retained' if args.keep_restart else 'removed'), flush=True)
     return png, raw
 
 
