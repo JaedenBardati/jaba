@@ -115,6 +115,17 @@ class TestGalaxyImage(unittest.TestCase):
             with self.assertRaises(TypeError): galaxy.galaxy_image(object(), plot=1)
             trace.assert_not_called()
 
+    def test_halpha_band_flux_uses_integrated_luminosity(self):
+        continuum = galaxy.galaxy_image(datacube=self.datacube, plot=False)
+        line = np.full(self.datacube['datacubes']['effective'].shape[:2], 2.)*u.erg/u.s/u.cm**2/u.sr
+        cube = dict(self.datacube, line_wavelength=656.3*u.nm, line_intensity={'effective': line})
+        combined = galaxy.galaxy_image(datacube=cube, plot=False)
+        for i, name in enumerate(('RGB.R', 'RGB.G', 'RGB.B')):
+            profile = galaxy.rad.load_bandpass(name)
+            area = galaxy.rad.integrate_bandpass(profile['wavelength'], np.ones(len(profile['wavelength'])), profile).to_value(u.micron)
+            expected = line.value*galaxy.rad.bandpass_response(cube['line_wavelength'], profile)/area
+            np.testing.assert_allclose((combined['channels']-continuum['channels'])[..., i].to_value(self.unit), expected, rtol=1e-12, atol=1e-14)
+
     def test_filter_driven_sampling_and_regular_override(self):
         profiles = [dict(wavelength=np.array(wave)*u.nm, transmission=np.array([0., 1., 0.]), detector='energy')
                     for wave in ([400., 450., 500.], [600., 601., 602.], [700., 740., 780.])]

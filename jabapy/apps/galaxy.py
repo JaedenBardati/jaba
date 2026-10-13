@@ -25,6 +25,9 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
     use explicit lam for spectral features or convergence checks. Explicit wavelength_range
     overrides filter sampling; n_wavelength or wavelength_spacing alone requests a regular
     grid spanning all selected filters. Optical-depth cubes are omitted by default.
+    gas_emission='halpha' adds unresolved gas emission at its rest wavelength. Its
+    integrated intensity contributes to each band through that band's response at Halpha;
+    no RGB channel is replaced and no artificial line height or width is assigned.
     If npix is supplied without grid_shape, the grid uses npix cells along each axis.
     supersampling=2 averages a 2 by 2 ray pattern per pixel before the RGB stretch;
     use supersampling=1 for the original single-ray sampling. Output size remains npix.
@@ -82,6 +85,11 @@ def galaxy_image(snap=None, bands=('RGB.R', 'RGB.G', 'RGB.B'), component='effect
     unit = u.erg/u.s/u.cm**2/u.sr/u.micron
     channels = np.stack([rad.integrate_bandpass(datacube['wavelength'], datacube['datacubes'][component],
                         profile, normalize=True).to_value(unit) for profile in profiles], axis=-1)
+    if 'line_intensity' in datacube:
+        line = datacube['line_intensity'][component].to_value(u.erg/u.s/u.cm**2/u.sr)
+        for i, profile in enumerate(profiles):
+            area = rad.integrate_bandpass(profile['wavelength'], np.ones(len(profile['wavelength'])), profile).to_value(u.micron)
+            channels[..., i] += line*rad.bandpass_response(datacube['line_wavelength'], profile)/area
     if channels.ndim != 3 or np.any(~np.isfinite(channels)): raise ValueError('The datacube must produce finite 2D band images.')
     brightness = np.mean(channels, axis=-1)
     positive = brightness > 0
@@ -130,6 +138,36 @@ def _galaxy_wavelengths(lam, wavelength_range, n_wavelength, wavelength_spacing)
     return lam
 
 
+def _gas_emission_samples(lam, gas_emission):
+    """Add the rest wavelength used for unresolved, integrated Halpha transfer."""
+    if gas_emission not in (None, 'halpha'): raise ValueError("gas_emission must be None or 'halpha'.")
+    if gas_emission is None: return lam
+    wave = lam.to_value(u.AA)
+    line = (rad.transition_wavelength_cgs['HI 2-3']*u.cm).to_value(u.AA)
+    close = np.isclose(wave, line, rtol=0, atol=1e-8)
+    return (np.sort(np.r_[wave[~close], line])*u.AA).to(lam.unit)
+
+
+def _halpha_particle_luminosity(snap, start, stop, inside, masses):
+    """Angle-integrated recombination luminosity, using the same n_i=n_e estimate as blr."""
+    rho = snap.dens[0][start:stop][inside].to_value(u.g/u.cm**3)
+    temperature = snap.temp[0][start:stop][inside].to_value(u.K)
+    metals = snap.metals[0][start:stop][inside].to_value(u.dimensionless_unscaled)
+    electrons = snap[0, 'ElectronAbundance'][start:stop][inside].to_value(u.dimensionless_unscaled)
+    if metals.ndim != 2 or metals.shape[1] < 2:
+        raise ValueError('Halpha requires total metal and helium mass fractions in snap.metals[0].')
+    hydrogen = 1-metals[:, 0]-metals[:, 1]
+    if (np.any(~np.isfinite(rho)) or np.any(rho < 0) or np.any(~np.isfinite(temperature)) or np.any(temperature <= 0)
+            or np.any(~np.isfinite(electrons)) or np.any(electrons < 0)
+            or np.any(~np.isfinite(hydrogen)) or np.any((hydrogen < 0) | (hydrogen > 1))):
+        raise ValueError('Halpha requires finite nonnegative densities/electron abundances, positive gas temperatures and valid hydrogen fractions.')
+    ne = rho/c.m_p.cgs.value*hydrogen*electrons
+    emissivity = rad.recombination_emissivity_cgs(temperature, ne, transition='HI 2-3', source='Pequignot_etal_1991')
+    gas_volume = np.zeros_like(rho)
+    np.divide(masses, rho, out=gas_volume, where=rho > 0)
+    return emissivity*gas_volume
+
+
 def _stellar_kernel_radii(snap, star_type, stellar_ngb, chunk_size, log):
     """Find support radii from other real stars in the snapshot's current frame."""
     if isinstance(stellar_ngb, bool) or not isinstance(stellar_ngb, (int, np.integer)) or stellar_ngb < 1:
@@ -164,7 +202,7 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
                      wavelength_range=None, n_wavelength=24, wavelength_spacing='log',
                      storage='auto', storage_dir=None, max_grid_bytes=4*1024**3, inner_radius=0*u.kpc,
                      backend='auto', return_optical_depth=True, supersampling=1, dust_deposition='kernel',
-                     wavelength_batch_size='auto', stellar_deposition='kernel', stellar_ngb=32, _batch_checkpoint=None):
+                     wavelength_batch_size='auto', stellar_deposition='kernel', stellar_ngb=32, _batch_checkpoint=None, gas_emission=None):
     """Trace intrinsic stellar populations and thermal MRN dust through a GIZMO galaxy toward +z.
 
     Lbox is the full physical image width; depth defaults to Lbox. center is relative to
@@ -193,7 +231,21 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
     Set wavelength_range=(lower, upper), n_wavelength and wavelength_spacing='log'/'linear'
     to generate a grid; bare limits mean micron. Alternatively provide explicit lam samples.
     lam and wavelength_range are mutually exclusive.
-    The spectrum contains stars plus dust, with no AGN, nebular emission or scattering source.
+    The spectrum contains stars plus dust, with no AGN or scattering source.
+    gas_emission='halpha' optionally adds hydrogen recombination emission at 656.3 nm,
+    using the existing Pequignot et al. coefficient and n_i=n_e approximation as in blr.
+    Each gas particle contributes emissivity times mass/density, divided by 4*pi for
+    isotropic transfer. Gas follows dust_deposition but emits even if its dust is absent
+    or sublimated; attenuation uses the existing dust opacity (no added gas opacity).
+    One extra wavelength is inserted for continuum/opacity sampling. The gas line is
+    traced in a separate line-integrated channel and returned as line_intensity[case]
+    (erg/s/cm^2/sr), with line_wavelength and optional line_optical_depth[case]. datacubes
+    retain only the continuum I_lambda; galaxy_image adds line intensity times the filter
+    transmission before band normalization. No arbitrary line width or peak height is
+    introduced. This unresolved rest-frame approximation assumes opacity and filter
+    response are effectively constant over the physical line. It includes no Doppler
+    shifts, thermal profile, collisional excitation or other lines; use the line-profile
+    tracer for narrow filters cutting through a resolved velocity profile.
     DustToGasRatio_Local is used if available, otherwise dust_to_metal times gas metallicity.
     Dust_Temperature supplies the emission temperature unless a scalar override is given;
     dust above dust_sublimation_temperature is excluded. No radiative-equilibrium iteration
@@ -235,19 +287,19 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
 
     # bound live coefficient grids by tracing independent wavelength batches
     lam = _galaxy_wavelengths(lam, wavelength_range, n_wavelength, wavelength_spacing)
+    lam = _gas_emission_samples(lam, gas_emission)
     if wavelength_batch_size != 'auto' and wavelength_batch_size is not None:
         if isinstance(wavelength_batch_size, bool) or not isinstance(wavelength_batch_size, (int, np.integer)) or wavelength_batch_size < 2:
             raise ValueError('wavelength_batch_size must be auto, None or an integer >= 2.')
-    batch_size = lam.size
-    if wavelength_batch_size == 'auto' and storage_dir is None and max_grid_bytes is not None and max_grid_bytes > 0:
+    batch_size = lam.size if wavelength_batch_size in ('auto', None) else min(lam.size, wavelength_batch_size)
+    limit_batch = wavelength_batch_size == 'auto' or (gas_emission is not None and wavelength_batch_size is not None)
+    if limit_batch and storage_dir is None and max_grid_bytes is not None and max_grid_bytes > 0:
         cells = int(np.prod(np.broadcast_to(np.asarray(grid_shape, dtype=int), (3,))))
         if cells > 0:
             index_bytes = cells*(4 if cells < np.iinfo(np.int32).max else 8) if storage == 'compact' else 0
             rows = cells+1 if storage == 'compact' else cells
-            capacity = int((max_grid_bytes-index_bytes)//(8*rows))-1
+            capacity = int((max_grid_bytes-index_bytes)//(8*rows))-1-int(gas_emission is not None)
             if capacity >= 2: batch_size = min(batch_size, capacity)
-    elif wavelength_batch_size is not None and wavelength_batch_size != 'auto':
-        batch_size = min(batch_size, wavelength_batch_size)
     if stellar_deposition not in ('direct', 'kernel'): raise ValueError("stellar_deposition must be 'direct' or 'kernel'.")
     stellar_smoothing = None
     result = None
@@ -269,7 +321,7 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
                 wavelength_range=None, n_wavelength=n_wavelength, wavelength_spacing=wavelength_spacing,
                 frequency_chunk_size=frequency_chunk_size, storage=storage, storage_dir=storage_dir, max_grid_bytes=max_grid_bytes,
                 inner_radius=inner_radius, dust_deposition=dust_deposition, stellar_deposition=stellar_deposition,
-                stellar_ngb=stellar_ngb, _stellar_smoothing=stellar_smoothing)
+                stellar_ngb=stellar_ngb, _stellar_smoothing=stellar_smoothing, gas_emission=gas_emission, _gas_emission_sampled=True)
             rendered = raytrace_galaxy_datacube(prepared, npix=npix, frequency_chunk_size=frequency_chunk_size,
                 step_fraction=step_fraction, N_NGB=N_NGB, workers=workers, query_chunk_size=query_chunk_size, log=log,
                 backend=backend, return_optical_depth=return_optical_depth, supersampling=supersampling)
@@ -280,7 +332,7 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
 
         # allocate final image-sized outputs once and release each batch before preparing the next
         if result is None:
-            result = {key: value for key, value in rendered.items() if key not in ('datacubes', 'optical_depth')}
+            result = {key: value for key, value in rendered.items() if key not in ('datacubes', 'optical_depth', 'line_intensity', 'line_optical_depth', 'line_wavelength')}
             result['wavelength'] = lam
             for key in ('datacubes', 'optical_depth'):
                 if key in rendered:
@@ -292,6 +344,8 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
         for key in ('datacubes', 'optical_depth'):
             if key in rendered:
                 for name in rendered[key]: result[key][name][..., first:last] = rendered[key][name][..., first-begin:]
+        for key in ('line_intensity', 'line_optical_depth', 'line_wavelength'):
+            if key in rendered: result[key] = rendered[key]
         del rendered
     return result
 
@@ -303,10 +357,13 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
                             log=False, cache=True, wavelength_range=None, n_wavelength=24, wavelength_spacing='log',
                             frequency_chunk_size=4, storage='auto', storage_dir=None, max_grid_bytes=4*1024**3,
                             inner_radius=0*u.kpc, dust_deposition='kernel', stellar_deposition='kernel', stellar_ngb=32,
-                            _stellar_smoothing=None):
+                            _stellar_smoothing=None, gas_emission=None, _gas_emission_sampled=False):
     """Read a GIZMO snapshot and prepare reusable stellar and dust coefficients.
 
     Uses the physics, units and spatial deposition described in galaxy_datacube.
+    With gas_emission='halpha', emission has one final line-integrated column after the
+    continuum columns when line_wavelength is present; raytrace_galaxy_datacube separates
+    that column into line_intensity so it is never interpreted as an I_lambda peak.
     Reads snap.pos, snap.mass, snap.metals and snapshot-specific fields through snap,
     honoring its cached values and transformed frame. The snapshot caches full input
     fields; chunk_size bounds processing temporaries, not the snapshot cache.
@@ -341,7 +398,10 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
 
     # validate the physical image and wavelength grids
     lam = _galaxy_wavelengths(lam, wavelength_range, n_wavelength, wavelength_spacing)
+    if not _gas_emission_sampled: lam = _gas_emission_samples(lam, gas_emission)
     wave = np.asarray(lam.to_value(u.AA))
+    halpha_samples = np.isclose(wave, (rad.transition_wavelength_cgs['HI 2-3']*u.cm).to_value(u.AA), rtol=0, atol=1e-8) if gas_emission else np.zeros(wave.size, dtype=bool)
+    has_line = bool(np.any(halpha_samples)); n_channels = wave.size+int(has_line)
     Lbox = u.Quantity(Lbox, u.kpc).to_value(u.cm)
     depth = Lbox if depth is None else u.Quantity(depth, u.kpc).to_value(u.cm)
     center = np.zeros(3) if center is None else u.Quantity(center, u.kpc).to_value(u.cm)
@@ -365,7 +425,7 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
     if stellar_deposition not in ('direct', 'kernel'): raise ValueError("stellar_deposition must be 'direct' or 'kernel'.")
     if stellar_deposition == 'kernel' and _stellar_smoothing is None:
         _stellar_smoothing = _stellar_kernel_radii(snap, star_type, stellar_ngb, chunk_size, log)
-    dense_bytes = n_cells*(wave.size+1)*8
+    dense_bytes = n_cells*(n_channels+1)*8
     if storage == 'auto': storage = 'compact' if max_grid_bytes is not None and dense_bytes > max_grid_bytes else 'dense'
     if log: print(f'Galaxy dense grid: {dense_bytes/1024**3:.2f} GiB; using {storage} storage.', flush=True)
     field_indices = None; n_fields = n_cells; index_bytes = 0
@@ -394,6 +454,7 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
                     ratio = snap[part, 'DustToGasRatio_Local'][start:start+chunk_size][inside].to_value(u.dimensionless_unscaled) if (part, 'DustToGasRatio_Local') in snap else dust_to_metal*np.maximum(metallicity, 0)
                     temp = snap[part, 'Dust_Temperature'][start:start+chunk_size][inside].to_value(u.K) if dust_temperature is None else np.full(h.shape, u.Quantity(dust_temperature, u.K).to_value(u.K))
                     active = (snap.mass[part][start:start+chunk_size][inside].to_value(u.g)*ratio > 0) & (temp <= u.Quantity(dust_sublimation_temperature, u.K).to_value(u.K))
+                    if np.any(halpha_samples): active[:] = True
                     bin_particles_kernel(pos[inside][active], h=h[active], mins=lower, maxs=upper, dims=dims, occupancy=occupied)
                 elif part == star_type and stellar_deposition == 'kernel':
                     formed = snap[part, 'StellarFormationTime'][start:start+chunk_size][inside].to_value(u.yr)
@@ -406,7 +467,7 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
                     print(f'Galaxy occupancy: type {part}, {fraction:.1%} read.', flush=True)
                     last_report = time.perf_counter()
         n_fields = int(np.count_nonzero(occupied))+1
-    coefficient_bytes = n_fields*(wave.size+1)*8
+    coefficient_bytes = n_fields*(n_channels+1)*8
     required_bytes = index_bytes + (coefficient_bytes if storage_dir is None else 0)
     if max_grid_bytes is not None and required_bytes > max_grid_bytes:
         raise MemoryError(f'Galaxy {storage} grids require {required_bytes/1024**3:.2f} GiB, exceeding '
@@ -424,16 +485,16 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
     # allocate coefficients in ram or new disk-backed files
     storage_path = None
     if storage_dir is None:
-        dust_density = np.zeros(n_fields); emission = np.zeros((n_fields, wave.size))
+        dust_density = np.zeros(n_fields); emission = np.zeros((n_fields, n_channels))
     else:
         directory = Path(storage_dir).expanduser(); directory.mkdir(parents=True, exist_ok=True)
         if shutil.disk_usage(directory).free < coefficient_bytes+1024**2:
             raise OSError(f'Insufficient disk space for {coefficient_bytes/1024**3:.2f} GiB of galaxy coefficients.')
         storage_path = Path(tempfile.mkdtemp(prefix='galaxy-continuum-', dir=directory))
         dust_density = np.lib.format.open_memmap(storage_path/'dust_density.npy', mode='w+', dtype=np.float64, shape=(n_fields,))
-        emission = np.lib.format.open_memmap(storage_path/'emission.npy', mode='w+', dtype=np.float64, shape=(n_fields, wave.size))
+        emission = np.lib.format.open_memmap(storage_path/'emission.npy', mode='w+', dtype=np.float64, shape=(n_fields, n_channels))
     bin_dims = (n_fields,) if field_indices is not None else tuple(dims)
-    dust_grid = dust_density.reshape(bin_dims); emission_grid = emission.T.reshape((wave.size,)+bin_dims)
+    dust_grid = dust_density.reshape(bin_dims); emission_grid = emission.T.reshape((n_channels,)+bin_dims)
     bin_kwargs = dict(mins=[0] if field_indices is not None else lower,
                       maxs=[n_fields] if field_indices is not None else upper, dims=bin_dims, nthreads=1)
     if log: print(f'Galaxy coefficients: {n_fields:,} rows, {coefficient_bytes/1024**3:.2f} GiB; '
@@ -483,6 +544,7 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
                     raise ValueError('Dust temperatures and dust-to-gas ratios must be finite and nonnegative.')
                 mass = masses*ratio*(temp <= u.Quantity(dust_sublimation_temperature, u.K).to_value(u.K))
                 if dust_deposition == 'kernel': h = snap.smooth[part][start:stop][inside].to_value(u.cm)
+                if np.any(halpha_samples): line_luminosity = _halpha_particle_luminosity(snap, start, stop, inside, masses)
 
             # deposit stellar luminosities after converting formation times and retained masses
             else:
@@ -511,6 +573,10 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
             if part == 0:
                 if kernel_deposition: bin_particles_kernel(selected, mass/volume, out=dust_grid, **kernel_kwargs)
                 else: bin_particles_direct(bin_pos, mass/volume, out=dust_grid, **bin_kwargs)
+            if part == 0 and has_line:
+                line_emission = line_luminosity/(4*np.pi*volume)
+                if kernel_deposition: bin_particles_kernel(selected, line_emission, out=emission_grid[-1], **kernel_kwargs)
+                else: bin_particles_direct(bin_pos, line_emission, out=emission_grid[-1], **bin_kwargs)
             for (first, last), stellar_spectrum in zip(spectral_chunks, stellar_spectra):
                 if part == 0:
                     luminosity = np.empty((selected.shape[0], last-first))
@@ -534,9 +600,12 @@ def prepare_galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=No
     if counts['stars'] == 0: raise ValueError('No stars selected; center the snapshot or set center explicitly.')
 
     return dict(wavelength=lam, emission=emission, dust_density=dust_density, field_indices=field_indices,
-                storage=storage, storage_path=storage_path, coefficient_bytes=coefficient_bytes, k_abs=k_abs, k_sca=k_sca,
+                storage=storage, storage_path=storage_path, coefficient_bytes=coefficient_bytes,
+                k_abs=np.r_[k_abs, k_abs[halpha_samples][0]] if has_line else k_abs,
+                k_sca=np.r_[k_sca, k_sca[halpha_samples][0]] if has_line else k_sca,
+                line_wavelength=rad.transition_wavelength_cgs['HI 2-3']*u.cm if has_line else None,
                 lower=lower, upper=upper, cell_width=cell_width, Lbox=Lbox, center=center,
-                grid_shape=tuple(dims), particle_counts=counts, dust_deposition=dust_deposition, stellar_deposition=stellar_deposition, stellar_ngb=stellar_ngb)
+                grid_shape=tuple(dims), particle_counts=counts, dust_deposition=dust_deposition, stellar_deposition=stellar_deposition, stellar_ngb=stellar_ngb, gas_emission=gas_emission)
 
 
 def raytrace_galaxy_datacube(prepared, npix=64, frequency_chunk_size=4, step_fraction=0.25,
@@ -601,6 +670,15 @@ def raytrace_galaxy_datacube(prepared, npix=64, frequency_chunk_size=4, step_fra
     intensity /= supersampling**2
     if return_optical_depth: optical_depth /= supersampling**2
 
+    # separate the line-integrated intensity before converting continuum wavelength units
+    line_intensity = None; line_depth = None
+    if prepared.get('line_wavelength') is not None:
+        line_intensity = u.Quantity(intensity[..., -1, :].copy(), u.erg/u.s/u.cm**2/u.sr, copy=False)
+        intensity = intensity[..., :-1, :]
+        if return_optical_depth:
+            line_depth = optical_depth[..., -1, :].copy()
+            optical_depth = optical_depth[..., :-1, :]
+
     # retain final pixel geometry and convert the averaged spectrum to the requested units
     output_unit = u.erg/u.s/u.cm**2/u.sr/lam.unit
     intensity *= (u.erg/u.s/u.cm**2/u.sr/u.AA).to(output_unit)
@@ -608,7 +686,11 @@ def raytrace_galaxy_datacube(prepared, npix=64, frequency_chunk_size=4, step_fra
     pixel_area = (Lbox/npix)**2
     names = ('pure_emission', 'absorption', 'effective')
     result = dict(wavelength=lam, extent=np.array([-Lbox/2,Lbox/2,-Lbox/2,Lbox/2])*u.cm,
-                pixel_area=pixel_area*u.cm**2, particle_counts=counts, grid_shape=tuple(dims), supersampling=int(supersampling),
+                pixel_area=pixel_area*u.cm**2, particle_counts=counts, grid_shape=tuple(dims), supersampling=int(supersampling), gas_emission=prepared.get('gas_emission'),
                 datacubes={name: intensity[..., i] for i, name in enumerate(names)})
     if return_optical_depth: result['optical_depth'] = {name: optical_depth[..., i] for i, name in enumerate(names)}
+    if line_intensity is not None:
+        result['line_wavelength'] = prepared['line_wavelength']
+        result['line_intensity'] = {name: line_intensity[..., i] for i, name in enumerate(names)}
+        if return_optical_depth: result['line_optical_depth'] = {name: line_depth[..., i] for i, name in enumerate(names)}
     return result

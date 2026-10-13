@@ -23,6 +23,53 @@ def write_header(file):
 
 
 class TestGalaxyDatacube(unittest.TestCase):
+    def test_halpha_luminosity_conservation_without_spectral_width(self):
+        options = {key: value for key, value in self.kw.items() if key not in ('npix', 'N_NGB', 'workers', 'lam')}
+        options.update(gas_emission='halpha', dust_deposition='kernel', dust_temperature=2000*u.K)
+        rho = self.snap.dens[0].to_value(u.g/u.cm**3)
+        masses = self.snap.mass[0].to_value(u.g)
+        ne = rho/galaxy.c.m_p.cgs.value*.7*np.array([1., .5])
+        expected = np.sum(galaxy.rad.recombination_emissivity_cgs(np.array([1e4, 2e4]), ne,
+                          transition='HI 2-3', source='Pequignot_etal_1991')*masses/rho)
+        for lam in ([380., 780.]*u.nm, [650., 656.3, 657., 670.]*u.nm):
+            dense = galaxy.prepare_galaxy_datacube(self.snap, lam=lam, **options)
+            luminosity = dense['emission'][:, -1].sum()*4*np.pi*np.prod(dense['cell_width'])
+            np.testing.assert_allclose(luminosity, expected, rtol=1e-14)
+            self.assertEqual(np.count_nonzero(dense['dust_density']), 0)
+            compact = galaxy.prepare_galaxy_datacube(self.snap, lam=lam, storage='compact', **options)
+            np.testing.assert_allclose(compact['emission'][compact['field_indices']], dense['emission'], rtol=1e-14)
+            continuum = galaxy.prepare_galaxy_datacube(self.snap, lam=dense['wavelength'], **dict(options, gas_emission=None))
+            np.testing.assert_allclose(dense['emission'][:, :-1], continuum['emission'], rtol=1e-14)
+
+    def test_halpha_transfer_independent_of_wavelength_spacing_and_batches(self):
+        options = dict(self.kw, gas_emission='halpha', dust_deposition='kernel', supersampling=2)
+        full = galaxy.galaxy_datacube(self.snap, **dict(options, wavelength_batch_size=None))
+        for lam in ([380., 500., 700., 780.]*u.nm, [650., 656., 657., 670.]*u.nm):
+            for backend in ('numpy', 'numba'):
+                result = galaxy.galaxy_datacube(self.snap, **dict(options, lam=lam, wavelength_batch_size=2, backend=backend))
+                self.assertEqual(np.count_nonzero(np.isclose(result['wavelength'].to_value(u.nm), 656.3)), 1)
+                self.assertEqual(result['datacubes']['effective'].shape[-1], result['wavelength'].size)
+                for name in full['datacubes']:
+                    np.testing.assert_allclose(result['line_intensity'][name], full['line_intensity'][name], rtol=1e-12)
+                    np.testing.assert_allclose(result['line_optical_depth'][name], full['line_optical_depth'][name], rtol=1e-12)
+        self.assertTrue(np.any(full['line_intensity']['pure_emission'].value > 0))
+        self.assertTrue(np.all(full['line_intensity']['pure_emission'] >= full['line_intensity']['effective']))
+        with self.assertRaises(ValueError): galaxy.galaxy_datacube(self.snap, **dict(options, gas_emission='other'))
+
+    def test_halpha_batch_memory_includes_integrated_line_column(self):
+        prepare = galaxy.prepare_galaxy_datacube
+        budget = 4*4**3*8
+        def checked(*args, **kwargs):
+            prepared = prepare(*args, **kwargs)
+            self.assertEqual(prepared['coefficient_bytes'], prepared['emission'].nbytes+prepared['dust_density'].nbytes)
+            self.assertLessEqual(prepared['coefficient_bytes'], budget)
+            return prepared
+        with patch.object(galaxy, 'prepare_galaxy_datacube', side_effect=checked):
+            result = galaxy.galaxy_datacube(self.snap, **dict(self.kw, gas_emission='halpha', max_grid_bytes=budget,
+                                                           wavelength_batch_size=3, return_optical_depth=False))
+        self.assertIn('line_intensity', result)
+        self.assertNotIn('line_optical_depth', result)
+
     def test_resume_skips_completed_wavelength_batches(self):
         saved = {}; trace = galaxy.raytrace_galaxy_datacube
         def checkpoint(first, last, rendered=None):
@@ -133,8 +180,11 @@ class TestGalaxyDatacube(unittest.TestCase):
                 group = file.create_group(f'PartType{part}')
                 group['Coordinates'] = [[-.2, 0, 0], [.2, 0, 0]]
                 group['Masses'] = [1., 1.]
-                group['Metallicity'] = [[.02], [.02]]
+                group['Metallicity'] = [[.02, .28], [.02, .28]] if part == 0 else [[.02], [.02]]
                 if part == 0:
+                    group['Density'] = [1e9, 2e9]
+                    group['Temperature'] = [1e4, 2e4]
+                    group['ElectronAbundance'] = [1., .5]
                     group['Dust_Temperature'] = [20., 30.]
                     group['SmoothingLength'] = [.45, .35]
                 else: group['StellarFormationTime'] = [8e8, 9e8]

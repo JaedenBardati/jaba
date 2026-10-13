@@ -9,12 +9,6 @@ import fcntl
 from pathlib import Path
 
 
-# these legacy checkpoints were verified to differ only in documentation and export cleanup
-_LEGACY_RESTART_CODES = {'0c9c21c611382a5514531033595097b0c3408a8e7a9bdf623ee1114db38fd385',
-                         '2d3b2fa6c62b9697b7f376b3162fa97d4f191294b747e3a7e88dd1a74eb81703'}
-_LEGACY_RENDER_CODE = '791a91b44d585dec70b91665b1202e74538790c7e850bae7a04f5a098c5c1b60'
-
-
 def _publish(path, writer):
     """Publish a fully flushed new file without replacing an existing result."""
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name+'.partial-', delete=False) as file:
@@ -46,7 +40,7 @@ def _batch_checkpoint(directory, first, last, rendered=None):
     # retain units and geometry alongside the numerical arrays
     arrays = {}; metadata = dict(plain={}, quantities={}, groups={})
     for key, value in rendered.items():
-        if key in ('datacubes', 'optical_depth'):
+        if key in ('datacubes', 'optical_depth', 'line_intensity', 'line_optical_depth'):
             metadata['groups'][key] = {}
             for name, data in value.items():
                 arrays[key+'_'+name] = np.asarray(data)
@@ -70,6 +64,8 @@ def main(argv=None):
     parser.add_argument('--output', type=Path, help='output prefix; defaults to ./<snapshot stem>_rgb')
     parser.add_argument('--center-type', type=int, default=3, help='particle type passed to center_on')
     parser.add_argument('--faceon-radius-kpc', type=float, help='optionally rotate face-on using this radius in kpc')
+    parser.add_argument('--gas-emission', choices=('halpha',), help='include unresolved gas Halpha recombination emission in the spectrum')
+    parser.add_argument('--bands', nargs=3, default=['RGB.R', 'RGB.G', 'RGB.B'], help='filter names in display red, green, blue order')
     parser.add_argument('--component', choices=('effective', 'absorption', 'pure_emission'), default='effective')
     parser.add_argument('--step-fraction', type=float, default=.25)
     parser.add_argument('--supersampling', type=int, default=1)
@@ -131,10 +127,6 @@ def main(argv=None):
         manifest = directory/'settings.json'
         if args.resume:
             saved = json.loads(manifest.read_text()) if manifest.exists() else {}
-            render_code = hashlib.sha256(Path(galaxy.__file__).read_bytes()+Path(galaxy.rad.__file__).read_bytes()+
-                                         Path(jaba.utils.grid.__file__).read_bytes()).hexdigest()
-            if saved.get('code') in _LEGACY_RESTART_CODES and render_code == _LEGACY_RENDER_CODE:
-                saved['code'] = settings['code']
             differences = sorted(key for key in saved.keys() | settings.keys() if saved.get(key) != settings.get(key))
             if differences:
                 parser.error('Restart mismatch in '+', '.join(differences)+'; use a new output/restart directory.')
@@ -156,7 +148,7 @@ def main(argv=None):
                 frequency_chunk_size=frequency_chunk_size, max_grid_bytes=budget,
                 wavelength_batch_size=min(args.wavelength_batch_size, max(2, capacity)),
                 _batch_checkpoint=lambda first, last, result=None: _batch_checkpoint(directory, first, last, result),
-                component=args.component, step_fraction=args.step_fraction, supersampling=args.supersampling,
+                bands=tuple(args.bands), gas_emission=args.gas_emission, component=args.component, step_fraction=args.step_fraction, supersampling=args.supersampling,
                 stellar_deposition=args.stellar_deposition, stellar_ngb=args.stellar_ngb,
                 dust_deposition=args.dust_deposition, workers=args.workers, log=not args.quiet, plot=False, **spectral)
             rgb = image['rgb']
