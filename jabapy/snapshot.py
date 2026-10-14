@@ -5,6 +5,7 @@ import numpy as np # pyright: ignore[reportMissingImports]
 
 from .io import hdf5
 from .utils import units as u
+from .utils import constants as c
 from .utils import coordinates as coord
 from .utils import grid
 from .utils import visual as jv 
@@ -557,6 +558,8 @@ class StandardDataset():
     """ 
     A class that represents a specific dataset with standard behaviour (e.g., snap.mass, snap.position, snap.velocity). 
     Access particle type specific datasets via indexing (e.g., snap.mass[0] or snap.mass['PartType0'] for PartType0).
+    Registry entries are tuples of file dataset names or callables taking (snapshot, particle_type_name).
+    Callable results are cached in snapshot._loaded_derived_datasets and listed in snapshot.derived_datasets.
     """
     def __init__(self, name, snapshot):
         self.name = name                # e.g., 'mass', 'position', 'velocity', etc.
@@ -565,69 +568,79 @@ class StandardDataset():
 
     def _get_dataset_info_for_particle_type(self, particle_type):
         parttype_name = self._snapshot._resolve_particle_type_name(particle_type)
+        if self.name not in self._snapshot._STANDARD_DSET_POSSIBLE_DATASET_NAMES:
+            return (parttype_name, self.name)
+        possible_datasets = self._snapshot._STANDARD_DSET_POSSIBLE_DATASET_NAMES[self.name]
+        if callable(possible_datasets):
+            if parttype_name not in self._snapshot.particle_types:
+                raise KeyError(f'Particle type "{parttype_name}" is not in the snapshot.')
+            return (parttype_name, self.name)
         dataset_name = self._dataset_names.get(parttype_name, None)
         if dataset_name is None:
+
             # find the dataset name for this standard dataset and particle type
-            for possible_dset in self._snapshot._STANDARD_DSET_POSSIBLE_DATASET_NAMES[self.name]:
+            for possible_dset in possible_datasets:
                 if possible_dset in self._snapshot._dataset_names(parttype_name):
                     if dataset_name is not None:
                         raise Exception(f"There are multiple possible datasets that {self.name} could refer to and I'm not sure which it is. Possible datasets are {dataset_name} or {possible_dset}.")
                     dataset_name = possible_dset
             if dataset_name is None:
-                raise AttributeError(f'I cannot find the dataset that corresponds to "{self.name}". It might not be in the snapshot, or you may need to add support for the name recognition.')  # if you get this error: adjust add relevant dataset to _STANDARD_DSET_POSSIBLE_DATASET_NAMES
+                raise AttributeError(f'I cannot find the dataset that corresponds to "{self.name}". It might not be in the snapshot, or you may need to add support for the name recognition.')
             self._dataset_names[parttype_name] = dataset_name
         return (parttype_name, dataset_name)
 
     def __getitem__(self, particle_type):
         """ Get the dataset for the specified particle type. """
         parttype_name, dataset_name = self._get_dataset_info_for_particle_type(particle_type)
+        definition = self._snapshot._STANDARD_DSET_POSSIBLE_DATASET_NAMES.get(self.name)
+        if callable(definition):
+            key = (parttype_name, dataset_name)
+            if key not in self._snapshot._loaded_derived_datasets:
+                self._snapshot._loaded_derived_datasets[key] = definition(self._snapshot, parttype_name)
+            return self._snapshot._loaded_derived_datasets[key]
         return self._snapshot[parttype_name, dataset_name]
 
     def __setitem__(self, particle_type, value):
-        """ Set the dataset for the specified particle type. """
+        """Replace the cached dataset in memory; first access establishes its units if necessary."""
         parttype_name, dataset_name = self._get_dataset_info_for_particle_type(particle_type)
 
-        if (parttype_name, dataset_name) in self.loaded_datasets:
-            # if loaded, get unit from the loaded dataset
-            dset_unit = u.get_unit(self._snapshot[parttype_name, dataset_name], default_unit=u.dimensionless_unscaled)
-        elif dataset_name in self._snapshot._DATASET_UNITS.keys():
-            # if not, guess its cgs in the appropriate dimensions if its in the dataset units dictionary 
-            dset_unit = 1
-            for subunit, subunittype in zip((u.cm,u.g,u.cm/u.s), ('mass','length','velocity')):
-                if subunittype in self._snapshot._DATASET_UNITS[dataset_name].keys():
-                    dset_unit *= subunit ** self._snapshot._DATASET_UNITS[dataset_name][subunittype]
-            dset_unit = u.get_unit(dset_unit, default_unit=u.dimensionless_unscaled)
-        else:
-            # otherwise, assume its unitless if no units are defined in that entry
-            warnings.warn('Dataset "{}" does not have defined units. Please update code if necessary - assuming its unitless.'.format(dataset_name)) # If you get this warning, you need to add info on the dataset to _DATASET_UNITS to get units. 
-            dset_unit = u.dimensionless_unscaled
-        
-        # assume the unit of the value passed is the same as the dataset unit if not specified
+        # validate against the current dataset and attach its units to bare values
+        dset_unit = u.get_unit(self[parttype_name], default_unit=u.dimensionless_unscaled)
         value_unit = u.get_unit(value, default_unit=dset_unit)
-        
-        # check the dataset unit and the value unit are compatible, otherwise raise an error
         if not value_unit.is_equivalent(dset_unit):
-            raise ValueError('Value has units "{}" which are not compatible with the dataset units "{}".'.format(value_unit, dset_unit))
-        
-        # update the dataset in memory  # TODO: add a switch to toggle between setting the dataset in the snapshot file or just in memory. - also make sure the method below is standardized in something like _set_dataset()
-        setattr(self, self._snapshot._get_dataset_attr_name(parttype_name, dataset_name), value) 
+            raise ValueError(f'Value has units "{value_unit}" which are not compatible with the dataset units "{dset_unit}".')
+        value = u.Quantity(value, unit=value_unit, copy=True)
+
+        # discard derived values that could depend on the replaced dataset
+        self._snapshot._loaded_derived_datasets.clear()
+        if callable(self._snapshot._STANDARD_DSET_POSSIBLE_DATASET_NAMES.get(self.name)):
+            self._snapshot._loaded_derived_datasets[parttype_name, dataset_name] = value
+        else:
+            setattr(self._snapshot, self._snapshot._get_dataset_attr_name(parttype_name, dataset_name), value)
+            self._snapshot.loaded_datasets.add((parttype_name, dataset_name))
 
     def __delitem__(self, particle_type):
-        """ Delete the dataset for the specified particle type. """
+        """ Unload the cached dataset so that its next access reloads or recomputes it. """
         parttype_name, dataset_name = self._get_dataset_info_for_particle_type(particle_type)
-
-        if (parttype_name, dataset_name) in self.loaded_datasets:
-            # TODO: add a switch to toggle between deleting the dataset in the snapshot file or just in memory. - also make sure the method below is standardized in something like _delete_dataset()
-            delattr(self, self._get_dataset_attr_name(parttype_name, dataset_name))
-        else:
-            raise AttributeError('Dataset {} for particle type {} has not yet been loaded. Please load it before attempting to delete it.'.format(dataset_name, parttype_name))
+        key = (parttype_name, dataset_name)
+        if key in self._snapshot.loaded_datasets:
+            delattr(self._snapshot, self._snapshot._get_dataset_attr_name(*key))
+            self._snapshot.loaded_datasets.remove(key)
+        elif key not in self._snapshot._loaded_derived_datasets:
+            raise AttributeError(f'Dataset {dataset_name} for particle type {parttype_name} has not yet been loaded.')
+        self._snapshot._loaded_derived_datasets.clear()
 
     def __set__(self, instance, value):
         raise NotImplementedError("Currently, you cannot set a standard dataset property without specifying its particle type.") # TODO: think about what makes sense here - maybe allow setting the dataset for all particle types at once? only if they are the same size? 
 
-    def __del__(self):
-        pass
-        #raise NotImplementedError("Currently, you cannot delete a standard dataset property without specifying its particle type.") # TODO: think about what makes sense here - maybe allow deleting the dataset for all particle types at once?
+    def __delete__(self, instance):
+
+        # unload this standard dataset for every cached particle type
+        definition = self._snapshot._STANDARD_DSET_POSSIBLE_DATASET_NAMES[self.name]
+        names = (self.name,) if callable(definition) else definition
+        for key in self._snapshot.loaded_datasets | self._snapshot.derived_datasets:
+            if key[1] in names and (key in self._snapshot.loaded_datasets or key in self._snapshot.derived_datasets):
+                del self._snapshot[key]
 
     def __repr__(self):
         return f"<Standard dataset '{self.name}' in snapshot '{self._snapshot.name}'>"
@@ -647,12 +660,22 @@ def _add_convenience_properties(cls):
         super(cls, self).__init__(*args, **kwargs)
         self.loaded_datasets = set()  # track which datasets have been loaded
         self._loaded_standard_datasets = dict() # track which standard dataset have been called and what loaded dataset they correspond to
-        self._loaded_derived_datasets = dict() # stores derived datasets and their data (todo, make a class for them like above)  # TODO: make work with snap[dataset, ...] and snap.r[...] styles instead of just snap.r(...)? -> then add some switch that prioritizes memory vs speed?
+        self._loaded_derived_datasets = dict() # cached callable standard datasets and convenience calculations
 
         self.absolute_centers = {'position': None, 'velocity': None}  # absolute centers of the current position and velocity in terms of the original snapshot orientation
         self.transformation_matrix = None  # transformation matrix of the current position in terms of the original snapshot orientation
         self._inv_transformation_matrix = None
     setattr(cls, '__init__', __init__)
+
+    @property
+    def derived_datasets(self):
+        """Keys of cached derived arrays; unlike loaded_datasets, these have no backing file dataset.
+
+        Assigning or unloading a dataset, transforming, or resetting transforms clears derived caches.
+        After editing an array in place, explicitly unload derived values before reading them again.
+        """
+        return set(self._loaded_derived_datasets)
+    setattr(cls, 'derived_datasets', derived_datasets)
 
     ## Add properties to handle loading datasets via shortcut attributes
     for _name, _ in cls._STANDARD_DSET_POSSIBLE_DATASET_NAMES.items():
@@ -664,10 +687,10 @@ def _add_convenience_properties(cls):
             return self._loaded_standard_datasets[_name]  # return the object
         @prop.setter
         def prop(self, value, _name=_name):
-            getattr(self, _name).__set__(value) # make sure the standard dataset object is created and loaded + pass on to __set__ to handle
+            getattr(self, _name).__set__(self, value)
         @prop.deleter
         def prop(self, _name=_name):
-            getattr(self, _name).__del__() # make sure the standard dataset object is created and loaded + pass on to __del__ to handle
+            getattr(self, _name).__delete__(self)
             del self._loaded_standard_datasets[_name] # remove from the loaded standard datasets dictionary
         setattr(cls, _name, prop)
         
@@ -826,6 +849,8 @@ def _add_convenience_properties(cls):
 
     ## Adjust the get dataset function to convert units and apply transformations when loading
     def _get_dataset(self, particle_type, dataset_name):
+        if dataset_name in self._STANDARD_DSET_POSSIBLE_DATASET_NAMES:
+            return getattr(self, dataset_name)[particle_type]
         if (particle_type, dataset_name) not in self.loaded_datasets:
             # get dataset in original units and orientation
             unit_data = super(cls, self)._get_dataset(particle_type, dataset_name)
@@ -864,6 +889,22 @@ def _add_convenience_properties(cls):
             self.loaded_datasets.add((particle_type, dataset_name))
         return getattr(self, self._get_dataset_attr_name(particle_type, dataset_name))
     setattr(cls, '_get_dataset', _get_dataset)
+
+    def __setitem__(self, key, value):
+        """Route tuple assignment through the standard dataset's in-memory setter."""
+        if not isinstance(key, tuple) or len(key) != 2:
+            raise KeyError('Setting a dataset requires a (particle_type, dataset_name) pair.')
+        dataset = getattr(self, key[1]) if key[1] in self._STANDARD_DSET_POSSIBLE_DATASET_NAMES else StandardDataset(key[1], self)
+        dataset[key[0]] = value
+    setattr(cls, '__setitem__', __setitem__)
+
+    def __delitem__(self, key):
+        """Route tuple deletion through the standard dataset's in-memory unloader."""
+        if not isinstance(key, tuple) or len(key) != 2:
+            raise KeyError('Unloading a dataset requires a (particle_type, dataset_name) pair.')
+        dataset = getattr(self, key[1]) if key[1] in self._STANDARD_DSET_POSSIBLE_DATASET_NAMES else StandardDataset(key[1], self)
+        del dataset[key[0]]
+    setattr(cls, '__delitem__', __delitem__)
 
 
     ## Add some extra convenience methods for specific transformation operations
@@ -970,7 +1011,7 @@ def _add_convenience_properties(cls):
             for dataset_name in standard_datasets:
                 try: # TODO: should probably check available datasets instead
                     getattr(self, dataset_name)[parttype]
-                except KeyError:
+                except (KeyError, AttributeError):
                     pass
     setattr(cls, 'load_standard_data', load_standard_data)
 
@@ -1285,21 +1326,6 @@ class GIZMO_Snapshot(Basic_GIZMO_Snapshot):
         'MagneticField': ('vector', None),
     }
 
-    _STANDARD_DSET_POSSIBLE_DATASET_NAMES = { 
-        # when one of these is called for the first time, it will go through all possible versions of these and choose the first one that exists in 
-        # the snapshot and use that one moving forward. An error will be raised if more or less than 1 of the names exist in the snapshot.
-        'pos': ('Coordinates',),
-        'vel': ('Velocities',),
-        'acc': ('Acceleration',),
-        'mass': ('Masses',),
-        'dens': ('Density',),
-        'temp': ('Temperature',),
-        'pot': ('Potential',),
-        'smooth': ('SmoothingLength','KernelMaxRadius'),
-        'mag': ('MagneticField',),
-        'metals': ('Metallicity',),
-        'fe': ('ElectronAbundance',),
-    }
     # _STANDARD_DSET_ALIASES = { # will be converted to lowercase first # TODO ?
     #     'position': 'pos',
     #     'velocity': 'vel',
@@ -1313,6 +1339,63 @@ class GIZMO_Snapshot(Basic_GIZMO_Snapshot):
     #     'magnetic_field': 'mag',
     #     'b_field': 'mag',
     # }
+
+    def _GIZMO_dtg(snap, particle_type='PartType0', solar_dust_to_metals=0.4, solar_metallicity=0.02, Tsub=1500.0, Tsub_std=75.0):
+        """
+        Return the local dust-to-gas ratio using the configured solar dust-to-metals factor.
+        Scale DustToGasRatio_Local by solar_dust_to_metals when available.
+        Otherwise, scale metallicity by that factor and apply 1/(1+exp((T_dust-Tsub)/Tsub_std))
+        when a dust temperature is available. Clip either result to [0, 1].
+        If neither field is present, return solar_metallicity for every gas particle.
+        """
+        particle_type_number = snap._resolve_particle_type_number(particle_type)
+        if particle_type_number != 0:
+            raise KeyError("Dust-to-gas ratio is only defined for gas particles in GIZMO.")
+        if (particle_type_number, 'DustToGasRatio_Local') in snap:
+            ftg_solar = snap[particle_type_number, 'DustToGasRatio_Local']
+        elif (particle_type_number, 'Metallicity') in snap:
+            Z = snap[particle_type_number, 'Metallicity'][:, 0]
+            if (particle_type_number, 'Dust_Temperature') in snap:
+                warnings.warn("No dust-to-gas ratio information available in snapshot; assuming the local dust-to-gas ratio is proportional to the local metallicity and that dust survives according to the smooth survival factor.")
+                sublimation_curve = 1.0/(1.0 + np.exp((snap[particle_type_number, 'Dust_Temperature'].to('K').value-Tsub)/Tsub_std))
+            else:
+                warnings.warn("No dust temperature information available in snapshot; assuming dust survives.")
+                sublimation_curve = 1.0
+            ftg_solar = Z * sublimation_curve
+        else:
+            warnings.warn("No dust information available in snapshot; assuming solar gas to dust ratio.")
+            return np.ones(snap.metadata['NumPart_Total'][particle_type_number]) * solar_metallicity
+        return np.maximum(np.minimum(solar_dust_to_metals*ftg_solar, 1.0), 0.0)
+
+    def _GIZMO_ne(snap, particle_type='PartType0'):
+        """Return the electron number density in cm^-3 for a GIZMO snapshot."""
+        particle_type_number = snap._resolve_particle_type_number(particle_type)
+        if particle_type_number != 0:
+            raise KeyError("Electron number density is only defined for gas particles in GIZMO.")
+        metals = snap[particle_type_number, 'Metallicity']
+        Z = metals[:, 0]
+        Y = metals[:, 1]
+        X = 1 - Y - Z
+        n_H = (snap[particle_type_number, 'Density']/c.m_p).to('cm**-3')*X
+        n_e = n_H * snap[particle_type_number, 'ElectronAbundance']
+        return n_e.to('cm**-3')
+
+    # map standard names to unambiguous file aliases or lazy callables taking (snapshot, particle_type_name)
+    _STANDARD_DSET_POSSIBLE_DATASET_NAMES = {
+        'pos': ('Coordinates',),
+        'vel': ('Velocities',),
+        'acc': ('Acceleration',),
+        'mass': ('Masses',),
+        'dens': ('Density',),
+        'temp': ('Temperature',),
+        'pot': ('Potential',),
+        'smooth': ('SmoothingLength','KernelMaxRadius'),
+        'mag': ('MagneticField',),
+        'metals': ('Metallicity',),
+        'fe': ('ElectronAbundance',),
+        'dtg': _GIZMO_dtg,
+        'ne': _GIZMO_ne,
+    }
 
     # TODO: add ...
     # _STANDARD_PARTICLE_TYPE_MEANINGS = {'gas', 'dm', 'star', 'bh'} # use these for general, non-gizmo specific analysis # TODO put in general snapshot class

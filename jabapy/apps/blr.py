@@ -1,3 +1,5 @@
+from tracemalloc import Snapshot
+
 import numpy as np
 from scipy.special import expit
 
@@ -5,9 +7,10 @@ from ..physics import radiation as rad
 from ..utils import units as u
 from ..utils import constants as c
 
+import warnings
 
-def get_Halpha_alpha_emissivity(snap, source='Pequignot_etal_1991', g_ff=1.0, d=3.0, dust=True): # for gizmo
-    """Return Halpha emissivity and absorption, scattering and effective opacities.
+def get_Halpha_alpha_emissivity(snap, transition='HI 2-3', source='Pequignot_etal_1991', g_ff=1.0, d=3.0, dust=True): 
+    """Return Halpha emissivity and relevant absorption, scattering and effective opacities at that wavelength.
 
     dust=True adds MRN dust opacities at Halpha before computing the effective opacity.
     Use DustToGasRatio_Local when available, otherwise half the metal mass fraction.
@@ -16,24 +19,17 @@ def get_Halpha_alpha_emissivity(snap, source='Pequignot_etal_1991', g_ff=1.0, d=
     dust-to-gas ratio is clipped to [0, 1]. dust=False returns gas-only coefficients.
     Dust does not change the intrinsic recombination emissivity.
     """
-    metals = snap[0, 'Metallicity']
-    Z = metals[:, 0]
-    Y = metals[:, 1]
-    X = 1 - Y - Z
-    n_H = (snap.dens0/c.m_p).to('cm**-3')*X
-    n_e = n_H * snap[0, 'ElectronAbundance']
-    nu_Halpha = 4.5668e14  # Halpha frequency in Hz
+    n_e = snap[0, 'ne'] # todo 'gas, ne' for general non-gizmo snapshots
+    nu_Halpha = rad.transition_frequency_cgs[transition]  # Halpha frequency in Hz
     
-    emissivity = rad.recombination_emissivity_cgs(snap.temp0.to('K').value, n_e.to('cm**-3').value, transition='HI 2-3', source=source) * u.erg / u.s / u.cm**3
+    emissivity = rad.recombination_emissivity_cgs(snap.temp0.to('K').value, n_e.to('cm**-3').value, transition=transition, source=source) * u.erg / u.s / u.cm**3
     alpha_abs = rad.alpha_ff_cgs(T=snap.temp0.to('K').value, n_e=n_e.to('cm**-3').value, nu=nu_Halpha, g_ff=g_ff) / u.cm
     alpha_sca = rad.alpha_T_cgs(n_e.to('cm**-3').value) / u.cm
 
     # add surviving dust absorption and scattering before combining the opacities
     if dust:
-        ratio = snap[0, 'DustToGasRatio_Local'] if (0, 'DustToGasRatio_Local') in snap else 0.5*Z
-        if (0, 'Dust_Temperature') in snap:
-            ratio = ratio*expit((1500-snap[0, 'Dust_Temperature'].to_value(u.K))/75)
-        rho_dust = snap.dens0.to_value(u.g/u.cm**3)*np.clip(np.asarray(ratio), 0, 1)
+        ratio = snap[0, 'dtg'] # todo 'gas, dtg' for general non-gizmo snapshots
+        rho_dust = snap.dens0.to_value(u.g/u.cm**3)*ratio
         k_abs, k_sca = rad.kappa_dust_MRN_cgs(nu_Halpha, dust_to_gas=1.0)
         alpha_abs += rho_dust*k_abs/u.cm
         alpha_sca += rho_dust*k_sca/u.cm
@@ -46,7 +42,7 @@ def get_Halpha_line_profile(snap, x0, x1, pixel_area, emissivity=None, alpha_abs
                            tree=None, step_fraction=0.25, approx=True, N_NGB=32, workers=-1,
                            query_chunk_size=4096, particle_chunk_size=4096, log=False, eta_update_seconds=5.0,
                            thermal_broadening=True, doppler_shift=True, relativistic=True,
-                           source='Pequignot_etal_1991', g_ff=1.0, d=3.0, dust=True):
+                           transition='HI 2-3', source='Pequignot_etal_1991', g_ff=1.0, d=3.0, dust=True):
     """Build GIZMO Halpha coefficients when omitted and trace the +z line and images.
 
     Supplied coefficients override the snapshot-derived coefficients, including dust.
@@ -58,10 +54,9 @@ def get_Halpha_line_profile(snap, x0, x1, pixel_area, emissivity=None, alpha_abs
     dust=False for gas-only defaults; supplied opacities are never modified by this flag.
     See radiation.raytrace_line_profile for transfer semantics.
     """
-
     # derive only missing coefficients and preserve supplied gas or dust contributions
     if emissivity is None or alpha_abs is None or alpha_eff is None:
-        derived = get_Halpha_alpha_emissivity(snap, source=source, g_ff=g_ff, d=d, dust=dust)
+        derived = get_Halpha_alpha_emissivity(snap, transition=transition, source=source, g_ff=g_ff, d=d, dust=dust)
         if emissivity is None: emissivity = derived[0]
         if alpha_abs is None: alpha_abs = derived[1]
         if alpha_eff is None: alpha_eff = derived[3]
@@ -69,7 +64,7 @@ def get_Halpha_line_profile(snap, x0, x1, pixel_area, emissivity=None, alpha_abs
     alpha_eff = u.Quantity(alpha_eff, u.cm**-1).to_value(u.cm**-1)
     alpha = np.column_stack((np.zeros_like(alpha_abs), alpha_abs, alpha_eff))/u.cm
     return rad.raytrace_line_profile(
-        x0, x1, pixel_area, emissivity, alpha, (c.c/(4.5668e14/u.s)).to(u.AA),
+        x0, x1, pixel_area, emissivity, alpha, (rad.transition_wavelength_cgs[transition]*u.cm).to(u.AA),
         pos=snap.pos0 if tree is None else None, tree=tree,
         velocity=snap.vel0 if doppler_shift else None, temperature=snap.temp0 if thermal_broadening else None,
         case_names=('pure_emission', 'absorption', 'effective'), spectral_width=spectral_width,

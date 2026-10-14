@@ -103,7 +103,7 @@ class TestParticleTransfer(unittest.TestCase):
                 blr.get_Halpha_line_profile(snap, self.x0, self.x1, 1*u.cm**2, *values,
                     thermal_broadening=False, doppler_shift=False, source='test', g_ff=1.2, d=2., dust=False)
                 if mask == 7: coefficients.assert_not_called()
-                else: coefficients.assert_called_once_with(snap, source='test', g_ff=1.2, d=2., dust=False)
+                else: coefficients.assert_called_once_with(snap, transition='HI 2-3', source='test', g_ff=1.2, d=2., dust=False)
                 args = trace.call_args.args
                 expected = [explicit[i] if values[i] is not None else derived[j] for i, j in enumerate((0, 1, 3))]
                 np.testing.assert_allclose(args[3], expected[0])
@@ -111,24 +111,28 @@ class TestParticleTransfer(unittest.TestCase):
                 np.testing.assert_allclose(args[4][:, 1], expected[1])
                 np.testing.assert_allclose(args[4][:, 2], expected[2])
 
-    def test_halpha_dust_opacities_and_sublimation(self):
+    def test_halpha_dust_opacities_use_derived_ratio(self):
         class Snapshot(dict):
             pass
         snap = Snapshot({(0, 'Metallicity'): np.array([[.02, .28], [.01, .28], [.03, .28], [0., .28]]),
                          (0, 'ElectronAbundance'): np.ones(4)})
         snap.dens0 = np.array([1., 2., 3., 4.])*1e-20*u.g/u.cm**3
         snap.temp0 = np.full(4, 1e4)*u.K
+        snap[0, 'ne'] = (snap.dens0/c.m_p).to(u.cm**-3)*(1-snap[0, 'Metallicity'].sum(axis=1))*snap[0, 'ElectronAbundance']
         gas = blr.get_Halpha_alpha_emissivity(snap, dust=False)
         for local_ratio in (None, np.array([.04, .02, .03, 0.])):
             if local_ratio is not None: snap[0, 'DustToGasRatio_Local'] = local_ratio.copy()
             for temperatures in (None, np.array([0., 1500., 1e8, 500.])*u.K):
                 if temperatures is not None: snap[0, 'Dust_Temperature'] = temperatures
                 elif (0, 'Dust_Temperature') in snap: del snap[0, 'Dust_Temperature']
-                result = blr.get_Halpha_alpha_emissivity(snap)
+
+                # supply a derived ratio; snapshot tests cover the actual dust prescription
                 ratio = 0.5*snap[0, 'Metallicity'][:, 0] if local_ratio is None else local_ratio
                 survival = 1. if temperatures is None else np.array([1/(1+np.exp(-20)), .5, 0., 1/(1+np.exp(-1000/75))])
-                density = snap.dens0.to_value(u.g/u.cm**3)*ratio*survival
-                k_abs, k_sca = rad.kappa_dust_MRN_cgs(4.5668e14, dust_to_gas=1.)
+                snap[0, 'dtg'] = np.clip(ratio*survival, 0, 1)
+                result = blr.get_Halpha_alpha_emissivity(snap)
+                density = snap.dens0.to_value(u.g/u.cm**3)*snap[0, 'dtg']
+                k_abs, k_sca = rad.kappa_dust_MRN_cgs(rad.transition_frequency_cgs['HI 2-3'], dust_to_gas=1.)
                 np.testing.assert_array_equal(result[0], gas[0])
                 np.testing.assert_allclose(result[1], gas[1]+density*k_abs/u.cm, rtol=1e-13, atol=0)
                 np.testing.assert_allclose(result[2], gas[2]+density*k_sca/u.cm, rtol=1e-13, atol=0)
@@ -145,7 +149,7 @@ class TestParticleTransfer(unittest.TestCase):
         coefficients = (2*self.ones*u.erg/u.s/u.cm**3, .3*self.ones/u.cm, .1*self.ones/u.cm, .4*self.ones/u.cm)
         with patch.object(blr, 'get_Halpha_alpha_emissivity', return_value=coefficients) as derived:
             result = blr.get_Halpha_line_profile(*args, n_spectral=30, **self.kw)
-            derived.assert_called_once_with(snap, source='Pequignot_etal_1991', g_ff=1.0, d=3.0, dust=True)
+            derived.assert_called_once_with(snap, transition='HI 2-3', source='Pequignot_etal_1991', g_ff=1.0, d=3.0, dust=True)
             explicit = blr.get_Halpha_line_profile(*args, coefficients[0], coefficients[1], coefficients[3], n_spectral=30, **self.kw)
             self.assertEqual(derived.call_count, 1)
         for name in result['profiles']:

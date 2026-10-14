@@ -21,6 +21,10 @@ transition_wavelength_cgs = {
     'HeII 4-6': 656.0e-7,
 }
 
+transition_frequency_cgs = {
+    k: c.c.cgs.value/v for k, v in transition_wavelength_cgs.items()
+}
+
 Pequignot_etal_1991_params = {
     'HI 2-3': (2.274, -0.659, 1.939, 0.574),           #H alpha
     'HI 2-4': (0.503, -0.515, 1.496, 0.698),           #H beta
