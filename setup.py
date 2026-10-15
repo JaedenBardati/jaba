@@ -11,7 +11,7 @@ setup(
     long_description=long_description,
     package_dir={
         'jaba': 'jabapy',
-        'jaba.analysis': 'jabapy/analysis',
+        'jaba.physics': 'jabapy/physics',
         'jaba.apps': 'jabapy/apps',
         'jaba.io': 'jabapy/io',
         'jaba.utils': 'jabapy/utils',
@@ -19,7 +19,7 @@ setup(
     },
     packages=[
         'jaba',
-        'jaba.analysis',
+        'jaba.physics',
         'jaba.apps',
         'jaba.io',
         'jaba.utils',

@@ -1,0 +1,176 @@
+import tempfile
+import inspect
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+from jabapy.apps import galaxy
+from jabapy.utils import units as u
+from jabapy.utils import visual as jv
+
+
+class TestGalaxyImage(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(plt.close, 'all')
+        self.lam = np.linspace(.28, 1.25, 128)*u.micron
+        self.unit = u.erg/u.s/u.cm**2/u.sr/u.micron
+        spatial = np.array([[0., .001, .01], [.02, .05, 1.]])
+        cube = spatial[..., None]*(1+self.lam.value)*self.unit
+        self.datacube = dict(wavelength=self.lam, extent=np.array([-5., 5., -5., 5.])*u.kpc,
+                              datacubes={'effective': cube, 'absorption': 2*cube, 'pure_emission': 3*cube})
+
+    def test_notebook_stretch_and_existing_axes(self):
+        fig, ax = plt.subplots()
+        before = self.datacube['datacubes']['effective'].copy()
+        with patch.object(galaxy, 'galaxy_datacube', side_effect=AssertionError('Unexpected raytrace')):
+            result = galaxy.galaxy_image(datacube=self.datacube, ax=ax)
+        channels = result['channels'].to_value(self.unit)
+        brightness = np.mean(channels, axis=-1)
+        scale = np.percentile(brightness[brightness > 0], 99.5)
+        stretched = np.arcsinh(brightness/(.03*scale))/np.arcsinh(1/.03)
+        expected = np.zeros_like(channels)
+        np.divide(channels*stretched[..., None], brightness[..., None], out=expected, where=brightness[..., None] > 0)
+        np.testing.assert_allclose(result['rgb'], np.clip(expected, 0, 1))
+        np.testing.assert_array_equal(self.datacube['datacubes']['effective'], before)
+        np.testing.assert_array_equal(result['image'].get_array(), result['rgb'])
+        np.testing.assert_array_equal(result['image'].get_extent(), [-5., 5., -5., 5.])
+        self.assertIs(result['figure'], fig); self.assertIs(result['ax'], ax)
+        self.assertEqual(len(fig.axes), 1)
+        self.assertEqual(result['image'].origin, 'lower')
+        self.assertNotIn('datacubes', result)
+
+    def test_filters_components_and_wavelength_units(self):
+        first = galaxy.galaxy_image(datacube=self.datacube)
+        other = dict(self.datacube, wavelength=self.lam.to(u.AA),
+                     datacubes={key: cube.to(self.unit*u.micron/u.AA) for key, cube in self.datacube['datacubes'].items()})
+        second = galaxy.galaxy_image(datacube=other, component='absorption', bands=('RGB.B', 'RGB.G', 'RGB.R'))
+        np.testing.assert_allclose(second['channels'], 2*first['channels'][..., ::-1])
+        np.testing.assert_allclose(second['rgb'], first['rgb'][..., ::-1])
+
+    def test_empty_image_and_invalid_inputs(self):
+        self.datacube['datacubes']['effective'] *= 0
+        result = galaxy.galaxy_image(datacube=self.datacube)
+        np.testing.assert_array_equal(result['rgb'], np.zeros((2, 3, 3)))
+        self.assertEqual(result['scale'].value, 0.)
+        with patch.object(galaxy, 'galaxy_datacube') as trace:
+            for kwargs in ({'stretch': 0}, {'percentile': 101}, {'percentile': np.nan}, {'bands': ['RGB.R']},
+                           {'bands': ('missing',)*3}, {'component': 'missing'}):
+                with self.subTest(kwargs=kwargs), self.assertRaises(ValueError): galaxy.galaxy_image(object(), **kwargs)
+            trace.assert_not_called()
+        with self.assertRaises(ValueError): galaxy.galaxy_image()
+        with self.assertRaises(ValueError): galaxy.galaxy_image(object(), datacube=self.datacube)
+        with self.assertRaises(ValueError): galaxy.galaxy_image(datacube=self.datacube, npix=8)
+
+    def test_plot_explicitly_displays_with_interactive_mode_disabled(self):
+        with plt.ioff(), patch.object(plt, 'show') as show:
+            result = galaxy.galaxy_image(datacube=self.datacube, plot=True)
+            show.assert_called_once_with()
+        self.assertIsNotNone(result['figure'])
+        self.assertIn(result['image'], result['ax'].images)
+
+    def test_no_plot_preserves_image_data_and_existing_axes(self):
+        fig, ax = plt.subplots()
+        ax.plot([0., 1.], [1., 0.])
+        figures = plt.get_fignums()
+        with patch.object(jv, 'imshow', side_effect=AssertionError('Unexpected plot')):
+            result = galaxy.galaxy_image(datacube=self.datacube, plot=False, ax=ax)
+        self.assertEqual(plt.get_fignums(), figures)
+        self.assertEqual(len(ax.lines), 1); self.assertEqual(len(ax.images), 0)
+        for key in ('figure', 'ax', 'image'): self.assertIsNone(result[key])
+        plotted = galaxy.galaxy_image(datacube=self.datacube, ax=ax)
+        np.testing.assert_array_equal(result['rgb'], plotted['rgb'])
+        np.testing.assert_array_equal(result['channels'], plotted['channels'])
+
+    def test_save_without_display_reuses_current_axes(self):
+        with tempfile.TemporaryDirectory() as directory, plt.rc_context({'savefig.dpi': 40, 'text.usetex': False}):
+            for use_path in (False, True):
+                fig, ax = plt.subplots()
+                ax.plot([0., 1.], [1., 0.])
+                path = Path(directory)/f'galaxy_{use_path}.png'
+                with patch.object(plt, 'show', side_effect=AssertionError('Unexpected display')):
+                    result = galaxy.galaxy_image(datacube=self.datacube, plot=path if use_path else str(path))
+                self.assertEqual(path.read_bytes()[:8], b'\x89PNG\r\n\x1a\n')
+                pixels = plt.imread(path)
+                self.assertEqual(pixels.ndim, 3); self.assertGreater(pixels.shape[0], 0)
+                style = jv.DEFAULT_CUSTOM_SUBPLOT_SETTINGS
+                width = jv.construct_paper_figsize(style['fig_style'], subtype=style['fig_substyle'], aspect=style['fig_aspect'])[0]
+                self.assertEqual(pixels.shape[1], round(width*40))
+                self.assertFalse(plt.fignum_exists(fig.number))
+                self.assertIs(result['ax'], ax)
+                np.testing.assert_array_equal(result['image'].get_array(), result['rgb'])
+        self.assertEqual(len(ax.lines), 1); self.assertEqual(len(ax.images), 1)
+
+    def test_save_supplied_axes_and_validate_plot(self):
+        fig, ax = plt.subplots()
+        with tempfile.TemporaryDirectory() as directory, plt.rc_context({'savefig.dpi': 40, 'text.usetex': False}):
+            path = Path(directory)/'supplied.png'
+            result = galaxy.galaxy_image(datacube=self.datacube, plot=path, ax=ax)
+            self.assertTrue(path.is_file())
+        self.assertIs(result['ax'], ax)
+        self.assertFalse(plt.fignum_exists(fig.number))
+        with patch.object(galaxy, 'galaxy_datacube') as trace:
+            with self.assertRaises(TypeError): galaxy.galaxy_image(object(), plot=1)
+            trace.assert_not_called()
+
+    def test_halpha_band_flux_uses_integrated_luminosity(self):
+        continuum = galaxy.galaxy_image(datacube=self.datacube, plot=False)
+        line = np.full(self.datacube['datacubes']['effective'].shape[:2], 2.)*u.erg/u.s/u.cm**2/u.sr
+        cube = dict(self.datacube, line_wavelength=656.3*u.nm, line_intensity={'effective': line})
+        combined = galaxy.galaxy_image(datacube=cube, plot=False)
+        for i, name in enumerate(('RGB.R', 'RGB.G', 'RGB.B')):
+            profile = galaxy.rad.load_bandpass(name)
+            area = galaxy.rad.integrate_bandpass(profile['wavelength'], np.ones(len(profile['wavelength'])), profile).to_value(u.micron)
+            expected = line.value*galaxy.rad.bandpass_response(cube['line_wavelength'], profile)/area
+            np.testing.assert_allclose((combined['channels']-continuum['channels'])[..., i].to_value(self.unit), expected, rtol=1e-12, atol=1e-14)
+
+    def test_filter_driven_sampling_and_regular_override(self):
+        profiles = [dict(wavelength=np.array(wave)*u.nm, transmission=np.array([0., 1., 0.]), detector='energy')
+                    for wave in ([400., 450., 500.], [600., 601., 602.], [700., 740., 780.])]
+        with patch.object(galaxy.rad, 'load_bandpass', side_effect=profiles), patch.object(galaxy, 'galaxy_datacube', return_value=self.datacube) as trace:
+            galaxy.galaxy_image(object(), bands=('a', 'b', 'c'), plot=False)
+            wave = trace.call_args.kwargs['lam'].to_value(u.nm)
+            self.assertEqual(wave[0], 400.); self.assertEqual(wave[-1], 780.)
+            self.assertGreaterEqual(np.count_nonzero((wave >= 600.) & (wave <= 602.)), 21)
+            self.assertTrue(all(center in wave for center in (450., 601., 740.)))
+        with patch.object(galaxy, 'galaxy_datacube', return_value=self.datacube) as trace:
+            galaxy.galaxy_image(object(), n_wavelength=40, wavelength_spacing='log', plot=False)
+            self.assertNotIn('lam', trace.call_args.kwargs)
+            np.testing.assert_allclose(trace.call_args.kwargs['wavelength_range'].to_value(u.nm), [380., 780.])
+            self.assertEqual(trace.call_args.kwargs['n_wavelength'], 40)
+            self.assertEqual(trace.call_args.kwargs['wavelength_spacing'], 'log')
+
+    def test_one_call_defaults_and_explicit_spectral_grid(self):
+        snap = object()
+        inner_percent = inspect.signature(galaxy.galaxy_image).parameters.get('_inner_percent_of_pixel_removed')
+        inner_fraction = .005 if inner_percent is None else .01*inner_percent.default
+        with patch.object(galaxy, 'galaxy_datacube', return_value=self.datacube) as trace:
+            galaxy.galaxy_image(snap, npix=512, grid_shape=128, inner_radius=.1, log=True)
+            self.assertIs(trace.call_args.args[0], snap)
+            options = trace.call_args.kwargs
+            self.assertEqual(options['npix'], 512); self.assertEqual(options['grid_shape'], 128)
+            self.assertEqual(options['inner_radius'], .1); self.assertTrue(options['log'])
+            self.assertEqual(options['n_wavelength'], 128); self.assertEqual(options['wavelength_spacing'], 'linear')
+            self.assertFalse(options['return_optical_depth'])
+            np.testing.assert_allclose(options['lam'].to_value(u.nm), np.unique(np.r_[np.linspace(380., 780., 21), 455., 545., 610.]))
+            self.assertNotIn('wavelength_range', options)
+            galaxy.galaxy_image(snap, npix=256)
+            self.assertEqual(trace.call_args.kwargs['grid_shape'], 256)
+            self.assertAlmostEqual(trace.call_args.kwargs['inner_radius'].to_value(u.pc), inner_fraction*10000/256)
+            galaxy.galaxy_image(snap, lam=self.lam, return_optical_depth=True, cache=False)
+            self.assertIs(trace.call_args.kwargs['lam'], self.lam)
+            self.assertNotIn('grid_shape', trace.call_args.kwargs)
+            self.assertAlmostEqual(trace.call_args.kwargs['inner_radius'].to_value(u.pc), inner_fraction*10000/64)
+            self.assertNotIn('wavelength_range', trace.call_args.kwargs)
+            self.assertFalse(trace.call_args.kwargs['cache'])
+            galaxy.galaxy_image(snap, wavelength_range=[.1, 2.], n_wavelength=200, wavelength_spacing='log')
+            self.assertEqual(trace.call_args.kwargs['wavelength_range'], [.1, 2.])
+            self.assertEqual(trace.call_args.kwargs['n_wavelength'], 200)
+            self.assertEqual(trace.call_args.kwargs['wavelength_spacing'], 'log')
+            for Lbox in (2., 2000*u.pc):
+                galaxy.galaxy_image(snap, Lbox=Lbox, npix=200)
+                self.assertAlmostEqual(trace.call_args.kwargs['inner_radius'].to_value(u.pc), inner_fraction*2000/200)
+            galaxy.galaxy_image(snap, inner_radius=0)
+            self.assertEqual(trace.call_args.kwargs['inner_radius'], 0)

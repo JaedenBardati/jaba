@@ -27,7 +27,7 @@ if [ "${1}" == "" ]; then
     ${JABA_PYTHON_CMD} -i
 else
     echo "Launching python with file ${1} ..."
-    ${JABA_PYTHON_CMD} ${1} ${@:2}
+    ${JABA_PYTHON_CMD} "$@"
 fi
 
 ############

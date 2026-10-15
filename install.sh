@@ -655,11 +655,25 @@ if [[ $DO_MAIN_SETUP == "Y" ]]; then
             printf "alias ls='ls -G --color=auto'\n"
             #for tmux stuff
             printf "export TERM=xterm-256color\n"
-            #start the ssh-agent if on Linux and not already started
+
+            # reuse one ssh agent per host when no inherited agent is reachable
             if [[ "$SYSTEM_TYPE" != "Darwin" ]]; then
-                printf "if [ -z \"\$SSH_AUTH_SOCK\" ] ; then\n"
-                printf "    eval \"\$(ssh-agent -s)\" > /dev/null\n"
-                printf "fi\n"
+                cat <<'EOF'
+if ssh-add -l >/dev/null 2>&1; [ "$?" -eq 2 ]; then
+    export SSH_AUTH_SOCK="$HOME/.ssh/jaba-agent-${HOSTNAME}.sock"
+    unset SSH_AGENT_PID
+    (
+        umask 077
+        mkdir -p "$HOME/.ssh" || exit
+        exec 9>"$SSH_AUTH_SOCK.lock" || exit
+        flock -w 5 9 || exit
+        if ssh-add -l >/dev/null 2>&1; [ "$?" -eq 2 ]; then
+            rm -f "$SSH_AUTH_SOCK"
+            ssh-agent -a "$SSH_AUTH_SOCK" -s 9>&- >/dev/null
+        fi
+    )
+fi
+EOF
             fi
         fi
 

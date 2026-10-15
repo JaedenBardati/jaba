@@ -1,6 +1,6 @@
 import sys
 
-from . import analysis
+from . import physics
 from . import apps
 from . import snapshot
 from . import io
@@ -11,8 +11,15 @@ sys.modules.setdefault(__name__ + '.units', utils.units)
 sys.modules.setdefault(__name__ + '.constants', utils.constants)
 sys.modules.setdefault(__name__ + '.visual', utils.visual)
 
+# resolve cached numba environments under either the installed or source package name
+_alternate_name = 'jabapy' if __name__ == 'jaba' else 'jaba'
+for _name, _module in tuple(sys.modules.items()):
+    if _name == __name__ or _name.startswith(__name__ + '.'):
+        sys.modules.setdefault(_alternate_name + _name[len(__name__):], _module)
+del _alternate_name, _name, _module
+
 __all__ = [
-	'analysis',  # general physics analysis functions           -> mostly standalone, but can import some utils if needed (commonly used: units, constants)
+	'physics',  # general physics analysis functions           -> mostly standalone, but can import some utils if needed (commonly used: units, constants)
 	'apps',      # applications of jaba to specific problems	-> can import anything
 	'snapshot',  # snapshot loading and manipulation 			-> core of jabapy simulation analysis, can import everything except apps
 	'io',        # input/output utilities						-> standalone utility package (eventually put as file/submodule in utils?)
