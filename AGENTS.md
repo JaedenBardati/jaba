@@ -50,6 +50,7 @@ Jaba is a personal research toolkit for astrophysical simulation analysis, prima
 - Generally, preserve array-axis conventions, particle ordering, and return shapes. Treat memory use and performance as part of correctness for large snapshots; retain vectorized/chunked operations and Numba-compatible kernels where used.
 - Avoid explicit error handling in analysis code unless requested or testing. In structured code, handle errors only outside performance-critical paths.
 - In places where there is signficant computational time (tens of seconds or more for a typical use case), add a `log` option that informs the user of what is taking place.
+- Avoid unnecessary or excessively detailed comments. Keep comments high-level and brief.
 
 ## Safety and scope
 
@@ -86,7 +87,7 @@ Use this as a rough template for the development process when implementing a new
 
 4) **Efficiency stage:** Profile or benchmark the working implementation to determine whether it is computationally time- and/or memory-limited, and identify the dominant bottlenecks. Prioritize optimizations with the greatest expected impact, such as improving algorithms, reducing redundant calculations, minimizing allocations, improving memory access patterns, or introducing parallelization. Avoid premature optimization and unnecessary complexity. After each significant optimization, verify that correctness is preserved and measure the actual improvement. Optimize primarily for the user's intended use cases, representative input sizes, and available hardware.
 
-5) **Clean up stage:** Remove temporary files, debugging statements, unused variables, obsolete code, and experimental implementations that are no longer needed. Avoid leaving unnecessary dependencies or configuration changes. Ensure that the final implementation is readable, maintainable, and consistent with the surrounding codebase. Do not delete unrelated files or user data.
+5) **Clean up stage:** Remove temporary files, debugging statements, unused variables, obsolete code, and experimental implementations that are no longer needed. Avoid leaving unnecessary dependencies or configuration changes. Ensure that the final implementation is readable, maintainable, and consistent with the surrounding codebase. Do not delete unrelated files or user data. Remove unnecessary or excessive comments.
 
 6) **Documentation stage:** Update relevant documentation when changes are sufficiently significant. MINIMALLY CHANGE THIS DOCUMENTATION, especially for small changes. To change `README.md` and/or `AGENTS.md`, explicit permission must be obtained from user. Document new functionality, interfaces, dependencies, configuration options, limitations, and important implementation decisions as appropriate. Keep documentation concise and consistent with the actual code. Allow the user to review documentation changes through the diff. You may also improve project instructions or documentation when doing so would meaningfully improve the efficiency or reliability of future development tasks.
 

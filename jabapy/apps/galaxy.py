@@ -202,7 +202,8 @@ def galaxy_datacube(snap, lam=None, Lbox=10*u.kpc, depth=None, center=None, npix
                      wavelength_range=None, n_wavelength=24, wavelength_spacing='log',
                      storage='auto', storage_dir=None, max_grid_bytes=4*1024**3, inner_radius=0*u.kpc,
                      backend='auto', return_optical_depth=True, supersampling=1, dust_deposition='kernel',
-                     wavelength_batch_size='auto', stellar_deposition='kernel', stellar_ngb=32, _batch_checkpoint=None, gas_emission=None):
+                     wavelength_batch_size='auto', stellar_deposition='kernel', stellar_ngb=32,
+                     _batch_checkpoint=None, gas_emission=None):
     """Trace intrinsic stellar populations and thermal MRN dust through a GIZMO galaxy toward +z.
 
     Lbox is the full physical image width; depth defaults to Lbox. center is relative to

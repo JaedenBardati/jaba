@@ -558,8 +558,6 @@ class StandardDataset():
     """ 
     A class that represents a specific dataset with standard behaviour (e.g., snap.mass, snap.position, snap.velocity). 
     Access particle type specific datasets via indexing (e.g., snap.mass[0] or snap.mass['PartType0'] for PartType0).
-    Registry entries are tuples of file dataset names or callables taking (snapshot, particle_type_name).
-    Callable results are cached in snapshot._loaded_derived_datasets and listed in snapshot.derived_datasets.
     """
     def __init__(self, name, snapshot):
         self.name = name                # e.g., 'mass', 'position', 'velocity', etc.
