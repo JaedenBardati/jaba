@@ -432,8 +432,8 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
             _s_names.insert(0, 'Total')
             jv.loglog(*zip(*_s), label=tuple(n for n in _s_names), ls='-', color=None, out=profile_dir+'vcirc_{}.png'.format(snap.name), xlabel='Spherical radius $r$ (pc)', ylabel=r'Circular velocity $v_\mathrm{circ}$ (km/s)', xmin=xmin, xmax=xmax, force_regular_log_major_ticks=force_regular_log_major_ticks, force_minor_ticks=force_minor_ticks)
             
-            # accretion rate 
-            _vr = np.einsum('ij,ij->i', (snap.vel0/snap.r(0)[..., None]).to('yr**-1').value, (snap.pos0 / snap.r(0)[:, np.newaxis]).to(1).value)  # radial velocity
+            # accretion rate
+            _vr = np.einsum('ij,ij->i', snap.vel0.to('pc yr**-1').value, (snap.pos0 / snap.r(0)[:, np.newaxis]).to(1).value)  # radial velocity
             _in, _out = _vr < 0, _vr >= 0
             Mdot_in = get_profile_with_defaults(snap.r(0)[_in].to('pc'), snap.mass0[_in].to('Msun') * np.abs(_vr[_in]), kind='C', force_dx=True) # dM/dR
             Mdot_out = get_profile_with_defaults(snap.r(0)[_out].to('pc'), snap.mass0[_out].to('Msun') * np.abs(_vr[_out]), kind='C', force_dx=True) # dM/dR
@@ -633,31 +633,33 @@ def quick_check(filepath, output_dir=None, debugging=False, center_around_BH=Tru
                             plt.ylabel('y [pc]')
                             plt.savefig(maps_dir +'inc{}/map_dens_{}_oom{}_inc{}.png'.format(inclination, snap.name, oom, inclination))
                             plt.clf()
-
+        
                             _cut = [0, 1] if incls == 0 else [1, 2]
-                            bins, _starmass_map = bin_particles_direct(snap.pos['star'].to('pc').value[:, _cut], 
-                                snap.mass['star'].to('Msun').value, mins=[extent[0], extent[2]], maxs=[extent[1], extent[3]], dims=[500, 500], ret_bins=True)
-                            dx = bins[0][1] - bins[0][0]
-                            _starsurfdens_map = _starmass_map/(dx*dx)
-                            plt.title('star')
-                            plt.imshow(np.log10(_starsurfdens_map), extent=extent, origin='lower')
-                            plt.colorbar(label=r"log star surface density $\Sigma$ [$M_\odot \mathrm{pc}^{-2}$]")
-                            plt.xlabel('x [pc]')
-                            plt.ylabel('y [pc]')
-                            plt.savefig(maps_dir +'inc{}/map_starsurfdens_{}_oom{}_inc{}.png'.format(inclination, snap.name, oom, inclination))
-                            plt.clf()
+                            if 'star' in snap.particle_type_meanings:
+                                bins, _starmass_map = bin_particles_direct(snap.pos['star'].to('pc').value[:, _cut], 
+                                    snap.mass['star'].to('Msun').value, mins=[extent[0], extent[2]], maxs=[extent[1], extent[3]], dims=[500, 500], ret_bins=True)
+                                dx = bins[0][1] - bins[0][0]
+                                _starsurfdens_map = _starmass_map/(dx*dx)
+                                plt.title('star')
+                                plt.imshow(np.log10(_starsurfdens_map), extent=extent, origin='lower')
+                                plt.colorbar(label=r"log star surface density $\Sigma$ [$M_\odot \mathrm{pc}^{-2}$]")
+                                plt.xlabel('x [pc]')
+                                plt.ylabel('y [pc]')
+                                plt.savefig(maps_dir +'inc{}/map_starsurfdens_{}_oom{}_inc{}.png'.format(inclination, snap.name, oom, inclination))
+                                plt.clf()
 
-                            bins, _dmmass_map = bin_particles_direct(snap.pos['dm'].to('pc').value[:, _cut], 
-                                snap.mass['dm'].to('Msun').value, mins=[extent[0], extent[2]], maxs=[extent[1], extent[3]], dims=[500, 500], ret_bins=True)
-                            dx = bins[0][1] - bins[0][0]
-                            _dmsurfdens_map = _dmmass_map/(dx*dx)
-                            plt.title('dark matter')
-                            plt.imshow(np.log10(_dmsurfdens_map), extent=extent, origin='lower')
-                            plt.colorbar(label=r"log dark matter surface density $\Sigma$ [$M_\odot \mathrm{pc}^{-2}$]")
-                            plt.xlabel('x [pc]')
-                            plt.ylabel('y [pc]')
-                            plt.savefig(maps_dir +'inc{}/map_dmsurfdens_{}_oom{}_inc{}.png'.format(inclination, snap.name, oom, inclination))
-                            plt.clf()
+                            if 'dm' in snap.particle_type_meanings:
+                                bins, _dmmass_map = bin_particles_direct(snap.pos['dm'].to('pc').value[:, _cut], 
+                                    snap.mass['dm'].to('Msun').value, mins=[extent[0], extent[2]], maxs=[extent[1], extent[3]], dims=[500, 500], ret_bins=True)
+                                dx = bins[0][1] - bins[0][0]
+                                _dmsurfdens_map = _dmmass_map/(dx*dx)
+                                plt.title('dark matter')
+                                plt.imshow(np.log10(_dmsurfdens_map), extent=extent, origin='lower')
+                                plt.colorbar(label=r"log dark matter surface density $\Sigma$ [$M_\odot \mathrm{pc}^{-2}$]")
+                                plt.xlabel('x [pc]')
+                                plt.ylabel('y [pc]')
+                                plt.savefig(maps_dir +'inc{}/map_dmsurfdens_{}_oom{}_inc{}.png'.format(inclination, snap.name, oom, inclination))
+                                plt.clf()
 
                             # if has_temp:
                             #     _map2 = pynbody.plot.sph.image(s.gas, qty='temp', width=r_pc, units="K", noplot=True, resolution=500, threaded=False)#, restrict_depth=True)
