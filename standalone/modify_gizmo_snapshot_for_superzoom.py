@@ -32,20 +32,21 @@ def remake_snap_for_zoom_in(
         ## load data for our special particle
         P0=F[special_type]
         if binary:
-            special_indices = slice(None)
+            special_indices = np.arange(len(P0['Masses']))
         elif special_id is None: # convert from id to index
             special_indices = [np.argmax(P0['Masses']),] # by default choose most massive one
         else:
             assert special_id in P0['ParticleIDs'], 'special_id not found in the particle list'
-            special_indices = [np.where(P0['ParticleIDs'] == special_id)[0,0],]
+            special_indices = [np.where(P0['ParticleIDs'][:] == special_id)[0][0],]
         del special_id
-        cen0 = np.sum(np.array(P0['Coordinates'], dtype=np.float64)*np.array(P0['Masses'], dtype=np.float64)[special_indices, None], axis=0)/np.sum(np.array(P0['Masses'], dtype=np.float64)[special_indices])
+        masses0 = np.array(P0['Masses'], dtype=np.float64)[special_indices]
+        cen0 = np.average(np.array(P0['Coordinates'], dtype=np.float64)[special_indices], axis=0, weights=masses0)
         print('special particle COM location =', cen0)
-        vel0=np.sum(np.array(P0['Velocities'], dtype=np.float64)*np.array(P0['Masses'], dtype=np.float64)[special_indices, None], axis=0)/np.sum(np.array(P0['Masses'], dtype=np.float64)[special_indices])
+        vel0=np.average(np.array(P0['Velocities'], dtype=np.float64)[special_indices], axis=0, weights=masses0)
         #acc0=np.sum(np.array(P0['Acceleration'][special_indices], dtype=np.float64)*np.array(P0['Masses'][special_indices], dtype=np.float64)[..., None], axis=1)/np.sum(np.array(P0['Masses'][special_indices], dtype=np.float64))
         print(cen0, vel0, special_indices)
         if 'Potential' in list(P0.keys()):
-            phi0=np.array(P0['Potential'][special_indices], dtype=np.float64)
+            phi0=np.average(np.array(P0['Potential'][special_indices], dtype=np.float64), weights=masses0)
         else:
             phi0 = 0.0
         
@@ -87,6 +88,8 @@ def remake_snap_for_zoom_in(
                 r = ascale * np.sqrt(np.sum(Pc*Pc,axis=1))
                 print(r.shape)
                 ok = np.where(r < r_cut)[0]
+                if key_P == special_type and remove_other_BHs:
+                    ok = ok[np.isin(ok, special_indices)]
                 ok_size = (r.take(ok,axis=0)).size
                 npart_new[j] = ok_size
                 for q in list(P.keys()):
@@ -169,11 +172,6 @@ def remake_snap_for_zoom_in(
                         #             Z_tmp = P_tmp[:,0:nmetals_forlater]
                         #             P_tmp = Z_tmp
 
-                        if key_P == special_type and remove_other_BHs:
-                            # remove all BHs other than special index
-                            P_tmp = P_tmp[special_indices, ...]
-                            npart_new[j] = 1
-
                         P.create_dataset(q,data=P_tmp)
 
         if move_BH_type5_to_3:
@@ -202,11 +200,11 @@ def remake_snap_for_zoom_in(
                 print('copying relevant datasets from', special_type, 'to', special_type_out)
                 for q in ['Acceleration', 'Coordinates', 'Masses', 'Potential', 'Velocities', 'ParticleIDs', 'ParticleIDGenerationNumber', 'ParticleChildIDsNumber']: 
                     if(q == 'Masses'): # exception for Masses which should be taken to be the BH mass
-                        P0_tmp = np.array(P0[bh_mass], dtype=np.float64)[special_indices]
+                        P0_tmp = np.array(P0[bh_mass], dtype=np.float64)
                     elif q in list(P0.keys()): # transfer from type 5
-                        P0_tmp = np.array(P0[q], dtype=np.float64)[special_indices]  # type 5 element
+                        P0_tmp = np.array(P0[q], dtype=np.float64)  # type 5 element
                     else:  # default to zero with warning
-                        P0_tmp = np.zeros(npart_new[3], dtype=np.float64)[special_indices]
+                        P0_tmp = np.zeros((npart_new[3], 3) if q == 'Acceleration' else npart_new[3], dtype=np.float64)
                         warnings.warn('Set type 3 dataset "{}" to zero (size {}) by default (not found in type 5)'.format(q, npart_new[3]))
                     P.create_dataset(q, data=P0_tmp)
                 
